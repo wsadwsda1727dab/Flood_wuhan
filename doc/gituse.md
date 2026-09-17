@@ -82,23 +82,29 @@
 | `git remote add origin <url>` | 添加远程仓库，别名为 `origin` |
 | `git remote set-url origin <url>` | 修改远程仓库地址 |
 | `git remote remove origin` | 删除远程仓库关联 |
+| `git remote show origin` | 查看远程仓库详细信息，包括分支跟踪情况 |
 | `git push -u origin master` | 推送本地 `master` 到远程，并设置默认上游 |
-| `git push origin master` | 推送本地 `master` 到远程 |
+| `git push origin master` | 推送本地 `master` 到远程，但不设置上游 |
+| `git push` | 已设置上游后，直接推送到默认远程分支 |
 | `git push --force` | 强制推送，用本地历史覆盖远程（危险） |
 | `git push --force-with-lease` | 更安全的强制推送，远程有新提交时会拒绝 |
 | `git fetch origin` | 下载远程最新状态，更新 `origin/master`，不动本地分支 |
 | `git fetch --all` | 拉取所有远程的最新状态 |
 | `git fetch --prune` | 清理远程已删除的分支引用 |
 | `git pull origin master` | 拉取远程 `master` 并合并到当前分支（fetch + merge） |
+| `git pull` | 已设置上游后，直接从默认远程分支拉取并合并 |
 | `git pull --rebase origin master` | 拉取远程并变基，保持历史线性 |
 | `git pull --allow-unrelated-histories` | 合并两个无共同历史的仓库 |
 | `git merge origin/master` | 把远程跟踪分支合并到当前本地分支 |
 | `git branch -vv` | 查看本地分支及其上游跟踪关系 |
+| `git branch -a` | 列出本地和远程所有分支 |
+| `git branch -r` | 列出远程跟踪分支 |
 | `git branch -M main` | 把当前分支重命名为 `main` |
+| `git branch --set-upstream-to=origin/master` | 手动设置当前分支的上游 |
+| `git branch --unset-upstream` | 取消当前分支的上游设置 |
 | `git switch -c <本地分支> origin/<远程分支>` | 基于远程分支创建并切换到本地分支 |
 | `git switch <分支>` | 切换分支 |
 | `git checkout <分支>` | 旧版切换分支命令 |
-| `git branch -r` | 查看远程分支列表 |
 
 ---
 
@@ -149,3 +155,19 @@
 
 ---
 
+## 八、概念区分
+
+| 概念 | 说明 |
+|---|---|
+| `git remote` | 管理远程仓库别名和地址，如 `origin` |
+| `git branch` | 管理本地分支，如 `master`、`dev` |
+| `origin/master` | 远程跟踪分支，由 `git fetch` 更新，记录远程 `master` 上次同步状态 |
+| 上游（upstream） | 本地分支默认对应的远程分支，如 `master` 的上游是 `origin/master` |
+| 暂存区（index/staging） | 准备提交的改动缓冲区，`git add` 放入，`git commit` 提交 |
+| 工作区 | 你实际编辑文件的地方 |
+| 本地仓库 | `.git` 目录，保存所有提交历史 |
+| 远程仓库 | GitHub 等托管平台上的仓库 |
+
+---
+
+以上命令均出自实际对话中涉及或建议的内容。
