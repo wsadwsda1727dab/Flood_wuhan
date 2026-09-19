@@ -24,15 +24,18 @@
 
 | 文件 | 状态 | 说明 |
 |---|---|---|
-| `doc/temp.original.js` | 存档 | 最初版本：只跑 2016 单个事件，窗口写死；依赖外部模块（`users/PRO_STU1/Pro1:mode` 的 Otsu、`users/OEEL/lib:loadAll`） |
-| `doc/temp.js` | 存档 | 改造为 19 事件逐时段执行，含【改动 1–15】 |
-| `doc/temp1.1.js` | 存档 | 新增【改动16】带时刻日期、【改动17】后时相审计；后窗口起点改为事件结束、`POST_PAD_DAYS` 6→18 |
-| `doc/temp1.2.js` | 存档 | 后时相改为「事件后最早 8 天 + 填充值掩膜 `updateMask(gt(-50))`」 |
-| `doc/temp1.3.js` | 存档 | 新增【改动18】`dropFill` 公共化、【改动19】全局去偏、【改动20】覆盖率/偏移进 summary；修正导出 `selectors` 写反 |
-| `doc/temp1.4.js` | 存档 | 新增【改动21】`DEBIAS_MODE` 三档 + 逐景去偏 `debiasOne` |
-| **`doc/temp1.5.js`** | **当前主版本** | 新增【改动22】`DIAG` 开关 + 两个 QC 指标进 summary；修复「影像算术丢属性」报错 |
-| `doc/events.js`、`doc/flood_pseudolabel.js` | 搁置 | 模块化方案（`require('users/<user>/<folder>:<script>')`），因 `Module not found` 未启用 |
+| `code/temp.original.js` | 存档 | 最初版本：只跑 2016 单个事件，窗口写死；依赖外部模块（`users/PRO_STU1/Pro1:mode` 的 Otsu、`users/OEEL/lib:loadAll`） |
+| `code/temp.js` | 存档 | 改造为 19 事件逐时段执行，含【改动 1–15】 |
+| `code/temp1.1.js` | 存档 | 新增【改动16】带时刻日期、【改动17】后时相审计；后窗口起点改为事件结束、`POST_PAD_DAYS` 6→18 |
+| `code/temp1.2.js` | 存档 | 后时相改为「事件后最早 8 天 + 填充值掩膜 `updateMask(gt(-50))`」 |
+| `code/temp1.3.js` | 存档 | 新增【改动18】`dropFill` 公共化、【改动19】全局去偏、【改动20】覆盖率/偏移进 summary；修正导出 `selectors` 写反 |
+| `code/temp1.4.js` | 存档 | 新增【改动21】`DEBIAS_MODE` 三档 + 逐景去偏 `debiasOne` |
+| **`code/temp1.5.js`** | **当前主版本** | 新增【改动22】`DIAG` 开关 + QC 指标进 summary、【改动23】两个面积列（km²）、perImage 残差归零、全量运行配置；修复「影像算术丢属性」报错 |
+| `code/temp_version_notes.md` | 本文档 | 版本与诊断说明 |
+| `code/events.js`、`code/flood_pseudolabel.js` | 搁置 | 模块化方案（`require('users/<user>/<folder>:<script>')`），因 `Module not found` 未启用 |
 | `doc/console.docx`、`doc/console1.1.docx` | 记录 | 两轮全量 Console 输出（首轮 19 事件；改动16/17 后一轮） |
+| `csvdata/Wuhan_2016_2025_Flood_Event_Summary.csv` | 数据 | temp1.5（perImage、全量 19 事件）导出的汇总表 |
+| `csvdata/事件筛查与训练集划分.md` | 分析 | 基于上面的汇总表做的事件筛查、机制发现与训练/验证划分建议 |
 | `doc/Wuhan_2016_Flood_PseudoLabel_RF.csv` | 记录（**当前工作区已不存在**） | 旧版 4000 点样本（2000/2000），对话中曾用它核对 `VV_diff`/`VV_ratio` 关系与 S2 缺失比例 |
 
 ---
@@ -78,8 +81,9 @@
 | `S1_FILL_DB` | −50 dB | 低于此值视为 GRD 切片填充值 |
 | `DEBIAS_MODE` | `'perImage'` | 去偏模式：`none` / `global` / `perImage` |
 | `DIAG` | `false` | 诊断输出开关 |
-| `RUN_EVENT_NAMES` / `VIEW_EVENT_NAME` | 当前均为 `['Wuhan_2025_0607']` | **全量运行前需改回 `null`** |
-| `EXPORT_ALL/PER_EVENT/SUMMARY` | `true`（但导出块被注释） | 导出开关 |
+| `RUN_EVENT_NAMES` | `null` | 全量跑 19 个时段；单跑某事件时填数组，如 `['Wuhan_2020_0705']` |
+| `VIEW_EVENT_NAME` | `'Wuhan_2020_0705'` | Map 上显示哪个时段；**必须是字符串**（数组会让 `name ===` 判断恒为 false） |
+| `EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY` | 均为 `true`，导出块**已取消注释** | 全量会产生 21 个任务（1 合并 + 1 汇总 + 19 每事件） |
 
 ---
 
@@ -129,12 +133,50 @@
 
 ### temp1.4.js → temp1.5.js：诊断收敛 + QC 指标进表（当前主版本）
 
-- 【改动22】新增 `DIAG` 开关（默认 `false`）。`true` 时输出四项：逐景偏移一览、5 档阈值敏感性全表、参考期基线检验、目视图层（洪涝-不去偏/去偏/去偏新增）
-- 新增 **QC 指标**写进 summary（正式跑数据也保留）：
-  - `offset_spread_db` = 后时相各景自身偏移的 max − min（>0.5 dB 说明全局去偏不够用）
-  - `n_flood_at_m35` / `n_flood_at_m45` / `flood_sens_ratio`（−3.5 与 −4.5 dB 两档的洪涝像元数及其比值）
-- `debiasOne` 现在把每景偏移与时间/轨道记成自定义属性，供诊断表使用
-- **修复报错**：影像算术会丢属性（连 `system:time_start` 也丢），导致诊断表 `ee.Date(null)` 报错；改为在 `debiasOne` 内显式带上 `t_bj` / `orbit`
+**A. 诊断收敛**（改动 155 增 / 43 删）
+
+- 【改动22】新增 `DIAG` 开关（默认 `false`）。`true` 时才输出四项：逐景偏移一览、5 档阈值敏感性全表、参考期基线检验、目视图层（洪涝-不去偏/去偏/去偏新增）
+- 原来散在主流程里的诊断代码全部收进 `if (DIAG) {}`；参考期检验顺手修正符号为"后一景 − 前一景"；目视图层去掉 `focal_max`（GEE 各版本签名不一致），改为注释提示"需要膨胀时自行添加"
+
+**B. `debiasOne` 带属性 + 暴露每景偏移**（修复报错）
+
+- 影像算术（`subtract`）会丢属性、连 `system:time_start` 都丢 → 诊断表 `ee.Date(null)` 报错。现在在 `debiasOne` 内显式 `.set('vv_off_db')` / `.set('vh_off_db')` / `.set('t_bj')` / `.set('orbit')`
+- 新增 `postCorrCol`（保留去偏后的影像集合，带每景偏移属性），`postCorr = postCorrCol.median()`；summary 的 `offset_spread_db` 直接由该集合的极差算出，不额外发请求
+
+**C. QC 指标进 summary（正式运行也保留）**
+
+- `offset_spread_db` = 后时相各景自身偏移的 max − min（>0.5 dB 说明全局去偏不够用，必须逐景）
+- `n_flood_at_m35` / `n_flood_at_m45` / `flood_sens_ratio` = −3.5 / −4.5 dB 两档的洪涝像元数及比值
+- **口径统一（关键修复）**：`nFloodAt()` 与 DIAG 的 5 档扫描都改用 `ee.Reducer.sum()`，与标签的 `countImage.reduceRegion` 一致。此前用 `count(selfMask())` 得到的是"至少含一个洪水像元的网格数"（2025_0607：2001），而 `sum` 是"面积加权像元数"（同事件 1200.35）——两者差 1.67 倍
+
+**D.【改动23】新增两个面积列（km²）**
+
+- `flood_area_km2`、`valid_area_km2`：用 `ee.Image.pixelArea()` 加权求和得到物理面积
+- 校验：`valid_area_km2 = 8581.565020640395`，与武汉市官方面积 8,569 km² 相差 0.15%，且在两个事件间完全一致到 12 位小数
+- 口径提醒：`n_flood_px × 0.01` 会系统性偏大（两个事件实测比值均为 0.86），**面积一律用 `flood_area_km2`**；`n_flood_px` 的用途是"抽样池网格数"
+
+**E. perImage 模式也扣残差**
+
+- 场景级偏移块从"只有 `global` 模式应用"改为 `!== 'none'` 都应用：`global` 扣整幅偏移，`perImage` 扣逐景校正后的残差（实测 +0.25 dB 量级）
+- 效果：2025_0607 的 `n_flood_px` 从 1200.35 → **1366.27**（+13.8%），与阈值敏感性表推得的"0.25 dB ≈ +8~14%"自洽
+
+**F. 全量运行配置**
+
+- `RUN_EVENT_NAMES = null`；`VIEW_EVENT_NAME = 'Wuhan_2020_0705'`（字符串）；三个 `Export` 块取消注释
+
+**G. 本版验证结果（两个事件实测）**
+
+| 检查项 | Wuhan_2025_0607 | Wuhan_2020_0705 |
+|---|---|---|
+| `s1_valid_cover` | 1.000 | 1.000 |
+| `valid_area_km2` | 8581.565 | 8581.565 |
+| `flood_area_km2` | 11.73 | 92.71 |
+| `n_flood_px` | 1,366.3 | 10,784.7 |
+| `offset_spread_db` | 1.058 | 1.123 |
+| `flood_sens_ratio` | 1.414 | 1.074 |
+| `vv_offset_db`（被扣掉的残差） | +0.247 | −0.246 |
+| QC 单调性（−3.5 / −4.0 / −4.5） | 1642.5 > 1366.3 > 1161.4 | 11,184 > 10,785 > 10,416 |
+| 雨量 | 117.2 mm | 432.5 mm |
 
 ---
 
@@ -166,10 +208,15 @@
 4. **背景漂移真实存在**：同轨道相隔 12 天、无洪水期，orbit 40 ≈ 0、orbit 113 ≈ −1.1 dB → 漂移由天气（干湿）驱动，与几何无关。
 5. **事件期偏移与轨道有关**：2025_0607 事件期 orbit 40 ≈ +1.28~+1.75 dB、orbit 113 ≈ +0.25~+0.63 dB，`offset_spread_db ≈ 1.06 dB` → 全局扣一个数会在两条轨道覆盖区残留 ±0.5 dB 偏差（沿轨道条纹），必须逐景去偏。
 6. **阈值敏感性（同一模式内）**：每 0.5 dB 约 −15%，`flood_sens_ratio ≈ 1.42`（=−3.5 档 ÷ −4.5 档）。此前"0.75 dB 造成 52% 差异"的说法是**跨模式**比较（none/global/perImage），不是纯阈值敏感性。
-7. **2025_0607 洪涝像元随处理方式的变化**：234（单日后窗口）→ 887（`none`）→ 1347（`global`）→ 约 2001（`perImage`，代理值与最终标签条件一致，待 summary 确认）。
+7. **2025_0607 洪涝像元随处理方式的变化**：234（单日后窗口）→ 887（`none`）→ 1347（`global`）→ **1366（`perImage`，含残差归零）**。`perImage` 落在 `none` 与 `global` 之间，符合"对 orbit 40 多扣、对 orbit 113 少扣"的预期。
 8. **样本类别比例**：该事件从 2000 : 234 改善到 2000 : 1347（global）；正类像元数低于 2000 时按全量入样，无需再调抽样参数。
 9. **S2 口径跨年不一致**：2016–2018 的事件多走 L1C/TOA（2018 两个事件甚至 L1C 有 8/22 景而 SR=0），2019 年起稳定走 SR/L2A → 跨年混训需按 `s2_source` 分层。
 10. **事件定义存疑**：`Wuhan_2025_0607` 的雨量注记写的是"新洲张渡湖站 117.2 mm（**6 月 21 日**数据）"，而事件窗口是 6 月 7–9 日，需回查 `doc/2016_2025.docx`。
+11. **QC 的 sum/count 口径差别**：`sum` 是面积加权像元数（部分覆盖的网格按比例计入），`count(selfMask())` 数的是"至少含一个洪水像元的网格数"，同事件 1200.35 vs 2001。标签与 QC 必须同口径。
+12. **面积口径**：`valid_area_km2` 与武汉官方面积吻合（8,581.57 vs 8,569 km²，差 0.15%）；`n_flood_px × 0.01` 系统性偏大约 16%（比值 0.86），面积报告一律用 `flood_area_km2`。
+13. **perImage 残差**：逐景校正后复合仍留 +0.25 dB 残差（4 景逐像元取中值是非线性组合），已在本版扣除。
+14. **全量 19 事件结果**：全部 `status=OK`、无 skipped；洪涝面积与雨量的一致性跨度为 34 倍（每 100 mm 雨量对应 1.2 ~ 41.4 km²）→ 各事件标签不可直接混用，详见 `csvdata/事件筛查与训练集划分.md`。
+15. **机制发现**：洪涝面积的上限主要由"S2 在事件后窗口是否测到水"决定，而非 SAR 阈值——4 个低面积事件（2021_0823、2022_0627、2023_0618、2023_0719）的 `n_medium_flood_px = 0`、S2 全域有效，且放宽阈值到 −3.5 dB 面积只增 4%~23%。
 
 ---
 
@@ -177,12 +224,15 @@
 
 | 优先级 | 事项 | 说明 |
 |---|---|---|
-| 高 | 确认 `perImage` 运行的自洽性 | summary 里 `n_flood_px` 应 ≈ 2001、`offset_spread_db` ≈ 1.06、`flood_sens_ratio` ≈ 1.42、`vv_offset_db`（残差）≈ 0、`s1_valid_cover` = 1 |
-| 高 | 锚点事件验证 | 用 `perImage` 跑 `Wuhan_2020_0705`（432.5 mm，洪涝范围明确），核对其洪涝面积显著大于 2025_0607，且不放宽阈值前不应大面积误判 |
-| 高 | 全量运行前收尾 | `RUN_EVENT_NAMES = null`、`VIEW_EVENT_NAME` 设为代表事件、`DIAG = false`、按需取消三个 `Export` 块注释 |
-| 中 | 事件定义回查 | 至少核对 `Wuhan_2025_0607`、以及 2016 两个事件的日期与雨量 |
-| 中 | 跨事件一致性评估 | 导出 summary 后比较 `s1_valid_cover` / `offset_spread_db` / `n_flood_px` vs `rain_ref_mm` |
-| 中 | 分类不平衡处理 | 少量事件正类仅 150~300 像元；合并训练时按事件配额（每事件每类上限）或分层加权，评价用洪涝类 F1/IoU |
+| ✅ 已完成 | perImage 自洽性 | `n_flood_px = 1366`、`offset_spread_db = 1.058`、`flood_sens_ratio = 1.414`、`s1_valid_cover = 1`、QC 三档单调 |
+| ✅ 已完成 | 锚点事件验证 | `Wuhan_2020_0705`：92.71 km² vs 2025_0607 的 11.73 km²（雨量 3.7 倍 → 面积 7.9 倍） |
+| ✅ 已完成 | 全量运行 | 19 事件全部 OK，汇总表见 `csvdata/` |
+| ✅ 已完成 | 跨事件一致性评估 | 见 `csvdata/事件筛查与训练集划分.md`（训练候选 10 / 仅验证 7 / 剔除 2） |
+| **高** | 缩短 S2 窗口 | 把 S2 从"整个后窗口（18 天）"改为"事件后最早 3~5 天"，与 S1 的 earliest-8-days 对齐；先重跑 4 个低面积事件 + 2020_0705 对照 |
+| **高** | 新增 `n_sar_cand_px` 列 | 只带 `s1Valid` 的 SAR 候选数，用于区分"S2 把像元挡掉"（可修）与"过境时水已退"（物理限制） |
+| 中 | 修 2 个覆盖不足事件 | `2016_0601`（后窗只取到单日，需延长后窗口或改为"最早 2 条不同轨道"）；`2024_0628`（前窗仅 4 景，需延长 `PRE_WINDOW_DAYS` 或手工指定） |
+| 中 | 事件定义回查 | 至少核对 `Wuhan_2025_0607`（雨量注记是 6/21 数据）、`Wuhan_2017_0608`（`rain_ref_mm` 为空）、2016 两个事件 |
+| 中 | 分类不平衡处理 | 少量事件正类仅 200~500 像元；合并训练时按事件配额或分层加权，评价用洪涝类 F1/IoU |
 | 低 | 自适应阈值（可选） | 原脚本的 Otsu 思路仍可作为对照方案；也可考虑用前窗标准差做 z-score 归一 |
 | 低 | 模块化整理 | `events.js` + `flood_pseudolabel.js` 方案若要用，需先确认 `users/<用户>/<文件夹>:<脚本>` 的真实路径 |
 
@@ -205,7 +255,7 @@
 **样本 CSV（`SAMPLE_SELECTORS`）**：`event_id, year, storm_start_bj, storm_end_bj, area, label, conf_flood, conf_nonflood, VV, VH, VV_diff, VH_diff, VV_ratio, NDVI, MNDWI, DEM, slope, S2_Valid`
 （`VV`/`VH`/`VV_ratio` 是原始绝对后向散射；`VV_diff`/`VH_diff` 是背景参考化后的变化量）
 
-**汇总 CSV（`SUMMARY_SELECTORS`）**：事件与窗口信息、S1/S2 计数与来源、各类像元数、`s1_valid_cover`、`vv_offset_db`、`vh_offset_db`、`debias_mode`、`offset_spread_db`、`n_flood_at_m35`、`n_flood_at_m45`、`flood_sens_ratio`、`sample_count`、`status`
+**汇总 CSV（`SUMMARY_SELECTORS`，共 35 列）**：事件与窗口信息、S1/S2 计数与来源、各类像元数（`n_flood_px` / `n_nonflood_px` / `n_high_flood_px` / `n_medium_flood_px` / `n_high_nonflood_px` / `n_medium_nonflood_px` / `s2_valid_px`）、`s1_valid_cover`、`vv_offset_db`、`vh_offset_db`、`debias_mode`、`offset_spread_db`、`n_flood_at_m35`、`n_flood_at_m45`、`flood_sens_ratio`、**`flood_area_km2`**、**`valid_area_km2`**、`sample_count`、`status`
 
 ### 9.3 诊断开关打开时会多做什么
 

@@ -73,6 +73,7 @@ var SUMMARY_SELECTORS = [
   's1_valid_cover', 'vv_offset_db', 'vh_offset_db',
   'debias_mode',
   'offset_spread_db', 'n_flood_at_m35', 'n_flood_at_m45', 'flood_sens_ratio',
+  'flood_area_km2', 'valid_area_km2',
   'sample_count', 'status'
 ];
 
@@ -287,10 +288,11 @@ var EVENTS = [
 
 // 只跑部分时段：null = 跑 EVENTS 全部；
 // 想单独取某一段数据时，例如：var RUN_EVENT_NAMES = ['Wuhan_2020_0705'];
-var RUN_EVENT_NAMES = ['Wuhan_2025_0607'];
+var RUN_EVENT_NAMES = null;          // ← 全量运行：19 个时段全跑
 
 // Map 上显示哪个时段的结果（必须是 EVENTS 里的 name）
-var VIEW_EVENT_NAME = ['Wuhan_2025_0607'];
+//   注意这里是字符串，不是数组（数组会让 name === 判断永远为 false，只能靠 fallback）
+var VIEW_EVENT_NAME = 'Wuhan_2020_0705';
 
 
 // ============================================================================
@@ -570,10 +572,12 @@ function buildEvent(ev) {
   var vv_diff = vv_post_c.subtract(vv_pre).rename('VV_diff');
   var vh_diff = vh_post_c.subtract(vh_pre).rename('VH_diff');
 
-  // 【改动21】场景级偏移：记录，且在 'global' 模式下应用
-  //   'perImage' 模式下这里算出的是"逐景校正之后的残差"，应当接近 0 —— 正好当作校正是否
-  //   成功的自检。summary 里的 vv_offset_db / vh_offset_db 统一记录这个场景级偏移，
-  //   便于跨事件比较背景漂移的量级。
+  // 【改动21】场景级偏移：测量并扣除
+  //   'global'   ：扣的就是这个整幅偏移；
+  //   'perImage' ：扣的是"逐景校正之后剩下的残差"（实测 +0.25 dB 量级）。
+  //                逐景校正已经处理掉轨道间的差异（~1.06 dB），这里只是 0.25 dB 级微调，
+  //                目的是让 VV_diff / VH_diff 的中位数彻底回到 0；不会重现"沿轨道条纹"。
+  //   summary 里的 vv_offset_db / vh_offset_db 记录被扣掉的量，便于跨事件比较。
   var vvOff = ee.Number(0);
   var vhOff = ee.Number(0);
   if (DEBIAS_MODE !== 'none') {
@@ -583,8 +587,6 @@ function buildEvent(ev) {
     vhOff = ee.Number(vh_diff.updateMask(s1Valid).reduceRegion({
       reducer: ee.Reducer.median(), geometry: geom, scale: SAMPLE_SCALE,
       bestEffort: true, maxPixels: 1e10}).values().get(0));
-  }
-  if (DEBIAS_MODE === 'global') {
     vv_diff = vv_diff.subtract(vvOff).rename('VV_diff');
     vh_diff = vh_diff.subtract(vhOff).rename('VH_diff');
   }
@@ -832,8 +834,12 @@ function buildEvent(ev) {
   function nFloodAt(thr) {
     var candAt = vv_diff.lt(thr).and(vh_diff.lt(VH_THRESHOLD))
       .unmask(0).and(sensCommon);
-    return ee.Number(candAt.selfMask().reduceRegion({
-      reducer: ee.Reducer.count(), geometry: geom,
+    // 必须用 sum（与标签的 countImage.reduceRegion 口径一致）。
+    // 注意两者的物理含义不同：sum 是"面积加权像元数"——部分覆盖的 100 m 像元按覆盖比例
+    //   计入（本事件 1200.35）；而 count(selfMask()) 数的是"至少含一个洪水像元的网格数"
+    //   （本事件 2001），后者会明显偏大，因为一个只覆盖 20% 的网格也被算作 1。
+    return ee.Number(candAt.reduceRegion({
+      reducer: ee.Reducer.sum(), geometry: geom,
       scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10}).values().get(0));
   }
 
@@ -865,6 +871,17 @@ function buildEvent(ev) {
   summary.n_flood_at_m35 = nSensLo;
   summary.n_flood_at_m45 = nSensHi;
   summary.flood_sens_ratio = nSensLo.divide(nSensHi);
+  // 【改动23】面积口径：n_flood_px 用的 sum 本身就是"面积加权像元数"（部分覆盖按比例计入），
+  //   乘 0.01 km² 即得面积（本事件 1200.35 → 约 12.0 km²）。这里再用 pixelArea 直接算物理面积，
+  //   二者互为校验，应该接近。valid_area_km2 是有效区（s1Valid = 1）的面积，作为占比的分母。
+  summary.flood_area_km2 = floodUsed.unmask(0)
+    .multiply(ee.Image.pixelArea()).divide(1e6)
+    .reduceRegion({reducer: ee.Reducer.sum(), geometry: geom, scale: SAMPLE_SCALE,
+      bestEffort: true, maxPixels: 1e10}).values().get(0);
+  summary.valid_area_km2 = s1Valid.unmask(0)
+    .multiply(ee.Image.pixelArea()).divide(1e6)
+    .reduceRegion({reducer: ee.Reducer.sum(), geometry: geom, scale: SAMPLE_SCALE,
+      bestEffort: true, maxPixels: 1e10}).values().get(0);
   summary.sample_count = nSamples;
   summary.status = (nSamples > 0) ? 'OK' : 'NO_SAMPLE';
 
@@ -892,8 +909,8 @@ function buildEvent(ev) {
           .unmask(0).and(sensCommon);
         return ee.Feature(null, {
           vv_thr: t,
-          n_flood_px: candAt.selfMask().reduceRegion({
-            reducer: ee.Reducer.count(), geometry: geom,
+          n_flood_px: candAt.reduceRegion({
+            reducer: ee.Reducer.sum(), geometry: geom,
             scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10}).values().get(0)
         });
       })));
@@ -1029,35 +1046,35 @@ var EXPORT_ALL = true;         // 所有时段合并成一份 CSV（含 event_id
 var EXPORT_PER_EVENT = true;   // 每个时段单独一份 CSV（按时间段取数据用这个）
 var EXPORT_SUMMARY = true;     // 每时段汇总表（降雨量 + 像元数 + 样本数）
 
-// if (EXPORT_ALL) {
-//   Export.table.toDrive({
-//     collection: allSamples,
-//     description: 'Wuhan_2016_2025_Flood_PseudoLabel_All',
-//     fileFormat: 'CSV',
-//     selectors: SAMPLE_SELECTORS
-//   });
-// }
+if (EXPORT_ALL) {
+  Export.table.toDrive({
+    collection: allSamples,
+    description: 'Wuhan_2016_2025_Flood_PseudoLabel_All',
+    fileFormat: 'CSV',
+    selectors: SAMPLE_SELECTORS
+  });
+}
 
-// if (EXPORT_SUMMARY) {
-//   Export.table.toDrive({
-//     collection: summaryFC,
-//     description: 'Wuhan_2016_2025_Flood_Event_Summary',
-//     fileFormat: 'CSV',
-//     selectors: SUMMARY_SELECTORS
-//   });
-// }
+if (EXPORT_SUMMARY) {
+  Export.table.toDrive({
+    collection: summaryFC,
+    description: 'Wuhan_2016_2025_Flood_Event_Summary',
+    fileFormat: 'CSV',
+    selectors: SUMMARY_SELECTORS
+  });
+}
 
-// if (EXPORT_PER_EVENT) {
-//   results.forEach(function (r) {
-//     if (r.skipped || r.summary.sample_count === 0) {
-//       print('跳过导出（该时段无可用样本）: ' + r.name);
-//       return;
-//     }
-//     Export.table.toDrive({
-//       collection: r.samples,
-//       description: 'Flood_' + r.name,
-//       fileFormat: 'CSV',
-//       selectors: SAMPLE_SELECTORS   
-//     });
-//   });
-// }
+if (EXPORT_PER_EVENT) {
+  results.forEach(function (r) {
+    if (r.skipped || r.summary.sample_count === 0) {
+      print('跳过导出（该时段无可用样本）: ' + r.name);
+      return;
+    }
+    Export.table.toDrive({
+      collection: r.samples,
+      description: 'Flood_' + r.name,
+      fileFormat: 'CSV',
+      selectors: SAMPLE_SELECTORS
+    });
+  });
+}
