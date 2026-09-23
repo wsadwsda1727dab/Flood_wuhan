@@ -34,14 +34,49 @@ var PRE_GAP_DAYS = 5;      // 基线窗口结束 → 事件开始 之间的间�
 // 【改动24】后窗口按传感器拆开（原来 S1/S2 共用一个 POST_PAD_DAYS = 18）
 //   Sentinel-1：保持较长的"搜索"窗口，保证重访影像数量足够（12 天重访 + 余量）。
 //               注意 18 天只是搜索范围，真正参与后时相合成的是 post8（最早 S1 之后的 8 天）。
-//   Sentinel-2：只取事件结束后最早 5 天，尽量贴近洪峰/积水状态。
-//               洪水消退远快于 SAR 重访，若沿用 18 天窗口，后半段影像多半已经是"退水后"，
-//               会把实际有水的像元算成 MNDWI 偏低 → High Flood 被漏掉、洪涝面积被低估。
-//   取 5 天是"最早 3~5 天"的上界（S2A+S2B 联合重访约 5 天，5 天窗口才留得下一景余量，
-//   2016 年只有 S2A、重访约 10 天，那个时段可能整窗口无景——脚本会打印警告）；
-//   想更贴近洪峰可改成 3，但部分事件可能只剩 1 景甚至 0 景。
+//   Sentinel-2：事件结束后 S2_POST_PAD_DAYS 天内的光学观测。
+//               洪水消退远快于 SAR 重访，当初担心"后半段影像已经是退水后"会把 MNDWI 拉低。
+//   【改动25】实测三档（5 / 10 / 18 天）后发现：真正的问题不是"退水稀释"，而是**云的稀释**——
+//     5 天：洪水区常被云盖住，S2 有效覆盖从 ~100% 掉到 0~81%（2021_0823 直接 0%），
+//           有光学背书的 High Flood 被大批推成"无 S2"的 Medium Flood，面积虚涨；
+//     10 天：覆盖补回大半，但 2020_0705 仍只有 23.6%，对照事件依旧不可用；
+//     18 天：覆盖回到 86.5%~100%（与基线一致），配合下面的"逐景算指数再取 max"，
+//           四个低面积事件的 High 全部回升（+37%~+752%），而中值口径下被稀释掉的
+//           恰恰是短历时暴雨的积水面。→ 故最终定为 18 天，"退水稀释"改由 max 口径解决。
+//   注意：标签语义随之变为"事件后 18 天内水体的峰值并集"，窗口一旦定稿不要再改，
+//         否则所有面积都会跟着变（实测 2023_0618 仅窗口 10→18 天，面积就从 6.80 涨到 25.26 km²）。
 var S1_POST_PAD_DAYS = 18;
-var S2_POST_PAD_DAYS = 10;
+var S2_POST_PAD_DAYS = 18;
+
+// ---- 【改动25】S2 光学合成口径 ----
+//  旧口径是"先合成波段、再算指数"：
+//      var s2 = s2Col.median();
+//      var mndwi = s2.normalizedDifference(['B3', 'B11']);
+//  这样得到的其实是"由各波段中值拼出来的虚拟景"的指数，不对应任何一天的真实观测。
+//  若只把它换成 s2Col.max()，得到的是"由各波段最大值拼出来的虚拟景"的指数：
+//      ① 不单调——实测 2021_0823（High 543→496）、2020_0705（126→122）的水体判定反而变少；
+//      ② 不可解释——最亮的绿波段与最强的短波红外可能来自不同日期，混出来的像元不存在。
+//  现在改为"逐景先算指数 → 再在时间维取统计量"：
+//      'max'    = 该像元在窗口内测到的最高水体信号，数学上必然 ≥ 中值口径，
+//                 只会让水体判定更宽松、不会更严，MNDWI_THRESHOLD 的含义也清晰（推荐）
+//      'median' = 逐景指数取中值，更保守，留作对照/敏感性分析
+//  注意：换口径后导出的 MNDWI / NDVI 特征含义随之变化（最大值而非典型值），
+//        与改动25 之前那几版样本不能直接混用；summary 里的 s2_index_stat 记录了本次口径。
+//  【改动26】S2_Valid 已与 S2_INDEX_STAT 解耦（见 4.5 节）：有效覆盖恒取"窗口内至少一次有效观测"，
+//        切到 'median' 时不再顺带收紧覆盖。此前 18 天档的 median 配对（Summary7）就是被这个耦合污染的。
+var S2_INDEX_STAT = 'max';
+
+// ---- 【改动27】S2 光学覆盖质控阈值 ----
+//  背景：18 天档逐景 max 的全量跑（Summary8）里有两场事件的光学证据几乎为零——
+//    2024_0621（S2 后窗被截到 6 天 + 全窗口被云盖）与 2017_0824（S2 源翻到 L2A 后覆盖崩掉）。
+//    这两场的 SAR 洪水候选 100% 落进 Medium Flood、High Flood = 0，标签退化成"纯 SAR 推断"，
+//    与其他"光学双确认"事件语义不一致，直接混训会污染标签。
+//  所以每场跑完自动算两个量并打标记，避免以后再靠人工比对才发现：
+//    s2_cover_valid_frac = S2 有效像元 / SAR 有效区像元（>1 表示 S2 覆盖超出 SAR 有效区之外）
+//    high_flood_share    = High Flood / (High + Medium Flood)，即正样本的"光学背书纯度"
+var LOW_S2_COVER_MIN = 0.5;      // 低于此比例 → LOW_S2_COVER
+var MIN_HIGH_FLOOD_SHARE = 0.3;  // 正样本 High 占比低于此值 → LOW_S2_COVER
+var NO_OPTICAL_COVER = 0.05;     // 低于此比例 → NO_OPTICAL（基本没有光学证据）
 
 // ---- GRD 切片填充值 ----
 //  Sentinel-1 GRD 按 25 秒切片存储，切片范围外的像元填的是很负的 dB 值（不是 0），
@@ -79,8 +114,11 @@ var SUMMARY_SELECTORS = [
   'pre_window_utc', 'post_window_utc', 'pre_days', 'post_days',
   // 【改动24】S1 / S2 后窗口拆开后各自的窗口信息
   //   post_window_utc / post_days 沿用旧列名，含义收敛为「Sentinel-1 后窗口」（值不变）；
-  //   S2 的 5 天窗口单独存两列，便于和 18 天窗口的旧结果横向对照。
+  //   S2 的短窗口单独存两列，便于和 18 天窗口的旧结果横向对照。
   's2_post_window_utc', 's2_post_days',
+  // 【改动25】记录本次的光学合成口径（逐景算指数后取 max 还是 median），
+  //   否则 max / median / 波段级统计三套结果混在一起就无法区分。
+  's2_index_stat',
   'area', 'rain_ref_mm', 'rainfall',
   's1_pre_count', 's1_post_count', 's2_source', 's2_count',
   'n_flood_px', 'n_nonflood_px', 'n_high_flood_px', 'n_medium_flood_px',
@@ -89,6 +127,8 @@ var SUMMARY_SELECTORS = [
   'debias_mode',
   'offset_spread_db', 'n_flood_at_m35', 'n_flood_at_m45', 'flood_sens_ratio',
   'flood_area_km2', 'valid_area_km2',
+  // 【改动27】S2 光学覆盖质控：覆盖率、正样本 High 占比、以及自动标记
+  'n_valid_px', 's2_cover_valid_frac', 'high_flood_share', 's2_qc_flag',
   'sample_count', 'status'
 ];
 
@@ -113,7 +153,10 @@ var SUMMARY_SELECTORS = [
 //               preEnd   = 事件开始 - PRE_GAP_DAYS
 //               preStart = preEnd - PRE_WINDOW_DAYS
 //               S1 后窗  = 事件结束 ~ 事件结束 + S1_POST_PAD_DAYS(18)   ← 只做搜索，合成见 post8
-//               S2 后窗  = 事件结束 ~ 事件结束 + S2_POST_PAD_DAYS(5)    ←【改动24】只取最早 5 天
+//               S2 后窗  = 事件结束 ~ 事件结束 + S2_POST_PAD_DAYS(18)   ←【改动24/25】18 天，指数取逐景 max
+//               s2PostEnd 可用于**单场**收窄 S2 后窗：当下一场暴雨落在本场后窗内时（见
+//               Wuhan_2020_0628 / Wuhan_2024_0621 两条），必须截到下一场开始之前，
+//               否则 max 会把下一场的水算到本场头上。
 // ============================================================================
 var EVENTS = [
   {
@@ -135,7 +178,7 @@ var EVENTS = [
     rainRefMM: 560.5,
     // 这一场沿用你之前已经跑通的窗口（北京时间写法）
     //   【改动24】postEnd 从这里起只对 Sentinel-1 生效；Sentinel-2 走默认规则
-    //   （事件结束 + S2_POST_PAD_DAYS = 2016-07-11），不再被这个 7-25 的长窗口拖到退水后。
+    //   （事件结束 + S2_POST_PAD_DAYS = 2016-07-24），不再被这个 7-25 的长窗口拖到退水后。
     preStart: '2016-05-20 00:00',
     preEnd: '2016-06-10 00:00',
     postStart: '2016-07-06 10:00',
@@ -166,7 +209,13 @@ var EVENTS = [
     end: '2017-08-25 00:00',
     area: '市区多区',
     rain: '发布暴雨橙色预警，多区降雨量50 mm以上',
-    rainRefMM: 50
+    rainRefMM: 50,
+    // 【改动30】强制走 L1C：Summary8 里该场被窗口内个别 L2A 景"拖"过去后，S2 有效覆盖从
+    //   98.0% 掉到 1.3%、High Flood 归零、面积虚涨 +230%（基线走 L1C 时覆盖 98.0%、
+    //   High 占比 93.7%）。这里压回 L1C 以恢复基线行为。
+    //   注意：仍需在 Console 核对本行的 s2_sr_count / s2_l1c_count 打印，
+    //   若确认该窗口确实已有可用的 L2A 覆盖，可把本行删掉改回自动选择。
+    s2Source: 'L1C'
   },
   {
     name: 'Wuhan_2018_0518',
@@ -202,7 +251,13 @@ var EVENTS = [
     end: '2020-06-29 13:00',
     area: '全市，洪山区第二师范站最大',
     rain: '24小时最大165.9 mm；洪山第二师范站231.6 mm（28日8时–29日13时）',
-    rainRefMM: 231.6
+    rainRefMM: 231.6,
+    // 【改动25】下一场暴雨 Wuhan_2020_0705 于 07-05 06:00 开始，而默认 S2 后窗会延到 07-17；
+    //   逐景 max 会把 0705 那场的水算进本场（同一批像元会被两个事件重复打上洪涝标签），
+    //   故把 S2 后窗截到下一场开始之前（约 5.5 天）。
+    //   副作用：观测变少、S2 有效覆盖可能明显下降（无 S2 的 SAR 候选会落入 Medium Flood）；
+    //   跑完全量后请核对本行的 s2_count / s2_valid_px，若覆盖过低就要考虑单独处理本场。
+    s2PostEnd: '2020-07-05 00:00'
   },
   {
     name: 'Wuhan_2020_0705',
@@ -262,25 +317,30 @@ var EVENTS = [
     rainRefMM: 162.3
   },
   {
-    name: 'Wuhan_2024_0621',
+    // 【改动28】原 Wuhan_2024_0621 与 Wuhan_2024_0628 相隔 7 天，已合并为一场"6 月双峰暴雨"。
+    //   合并理由（见文档【改动28】）：
+    //     ① 保持两场独立 + 给 0621 手工截断到 06-28（原【改动25(c)】）→ 06-22~06-27 只有 5 景且几乎
+    //        全被云盖，High Flood = 0、标签退化成纯 SAR 推断（Summary8：S2 覆盖 0.3%）；
+    //     ② 取消截断 → 两场会共用 06-28 之后的 11.8 天影像（占各自窗口 65.5%），同一批像元被两个
+    //        事件重复打标签，既有标签混淆也有训练集泄漏风险；
+    //     ③ 合并后只剩一条标签，既无重复也不丢观测。
+    name: 'Wuhan_2024_0621_0628',
     year: 2024,
+    // start = 首场起点；end = **首场终点**（不是次场终点）——
+    //   因为 end 决定 SAR 后时相合成的起点（最早 S1 = t0 → 合成跨度 [t0, t0+8 天]）。
+    //   取首场终点可以让后时相合成尽早开始，8 天跨度才有可能同时覆盖 06-28 的次场；
+    //   若取次场终点（06-28 12:00），后时相全部晚于次场，首场的积水面会被整体丢掉。
     start: '2024-06-21 07:00',
     end: '2024-06-22 07:00',
-    area: '黄陂、东西湖、蔡甸、江夏、经开区',
-    rain: '多个区24小时累计超100 mm',
-    rainRefMM: 100
-  },
-  {
-    name: 'Wuhan_2024_0628',
-    year: 2024,
-    start: '2024-06-28 03:00',
-    end: '2024-06-28 12:00',
-    area: '东西湖（长青街站）',
-    rain: '东西湖长青街站147.8 mm',
-    rainRefMM: 147.8,
-    // 6月21–22日刚下过一场暴雨，基线窗口往前挪
-    preStart: '2024-05-20 00:00',
-    preEnd: '2024-06-10 00:00'
+    area: '首场：黄陂、东西湖、蔡甸、江夏、经开区；次场：东西湖（长青街站）',
+    rain: '首场（6/21–22）多个区 24 小时累计超 100 mm；次场（6/28）东西湖长青街站 147.8 mm；两场合计约 247.8 mm',
+    rainRefMM: 247.8,
+    // 【改动28】S2 后窗取两场默认窗口之并（06-21 ~ 07-16，24 天，比常规 18 天长）：
+    //   常规 18 天会在 07-10 就截止，丢掉次场后段的晴空观测。这是本场唯一的窗口特例，须在方法里写明。
+    // 已核对的副作用：合并后 SAR 后时相从首场结束（06-22）起算，8 天跨度若只覆盖到次场的一部分，
+    //   "只在首场积水、之后已退"的像元会漏检——属欠检（不会把没水的地方标成水），
+    //   表现为面积偏小而非虚涨。重跑后请核对本行的 s1_post_after_dates / s2_count / s2_qc_flag。
+    s2PostEnd: '2024-07-16 00:00'
   },
   {
     name: 'Wuhan_2025_0522',
@@ -369,7 +429,7 @@ function dropFill(im) {
 // 计算某个事件的“事件前基线窗口”和“事件后窗口”
 //  【改动24】后窗口拆成 S1 / S2 两个，各自有独立的结束时间：
 //    S1：事件结束 ~ 事件结束 + S1_POST_PAD_DAYS(18)  —— 只是搜索窗口，实际合成 = 最早 S1 之后 8 天（见 post8）
-//    S2：事件结束 ~ 事件结束 + S2_POST_PAD_DAYS(5)   —— 尽量贴近洪峰/积水状态，减少退水导致的 MNDWI 漏检
+//    S2：事件结束 ~ 事件结束 + S2_POST_PAD_DAYS(18)  —— 覆盖优先，"退水稀释"由逐景 max 口径解决
 //  拆开的原因：S1 受重访周期限制，缩短窗口会让部分事件后时相影像不足；S2 受退水速度限制，
 //  窗口太长会把"已经退水"的影像平均进来。两者诉求相反，不能再共用一个参数。
 function eventWindows(ev) {
@@ -439,9 +499,11 @@ function summaryBase(ev, w, avail, s2Source) {
     post_window_utc: w.s1PostStartStr + ' ~ ' + w.s1PostEndStr,
     pre_days: w.preDays,
     post_days: w.s1PostDays,
-    // 【改动24】Sentinel-2 只取最早 5 天，单独记两列，便于和 18 天窗口的旧结果对照
+    // 【改动24/25】Sentinel-2 后窗 = S2_POST_PAD_DAYS(18) 天（个别事件用 s2PostEnd 收窄），单独记两列
     s2_post_window_utc: w.s2PostStartStr + ' ~ ' + w.s2PostEndStr,
     s2_post_days: w.s2PostDays,
+    // 【改动25】光学合成口径，便于跨版本追溯
+    s2_index_stat: S2_INDEX_STAT,
     area: ev.area,
     rain_ref_mm: ev.rainRefMM,
     rainfall: ev.rain,
@@ -456,6 +518,11 @@ function summaryBase(ev, w, avail, s2Source) {
     n_high_nonflood_px: null,
     n_medium_nonflood_px: null,
     s2_valid_px: null,
+    // 【改动27】S2 光学覆盖质控（跳过的时段也保留列）
+    n_valid_px: null,
+    s2_cover_valid_frac: null,
+    high_flood_share: null,
+    s2_qc_flag: null,
     sample_count: null,
     status: 'SKIPPED_NO_S1'
   };
@@ -498,7 +565,7 @@ function buildEvent(ev) {
   function getS2Collection(id) {
     return ee.ImageCollection(id)
       .filterBounds(roi)
-      // 【改动24】只取事件结束后最早 S2_POST_PAD_DAYS(5) 天：
+      // 【改动24/25】只取事件结束后 S2_POST_PAD_DAYS(18) 天：
       //   洪水消退远快于 SAR/S2 重访，18 天窗口后半段的影像多半已经退水，
       //   会把实际有水的像元算成 MNDWI 偏低（High Flood 漏检、面积低估）。
       .filterDate(w.s2PostStart, w.s2PostEnd)
@@ -534,14 +601,35 @@ function buildEvent(ev) {
       .map(fmtBjDateTime)
   }).getInfo();
 
+  // 【改动30】允许事件表强制指定 S2 源：ev.s2Source = 'L1C' / 'L2A'（不写则沿用"L2A 优先"自动选择）
+  //   背景：2017_0824 在 Summary8 里从 L1C 翻成了 L2A——窗口内只要出现**个别** L2A 景，
+  //         整场就被换到另一套辐射口径，而那个 L2A 在窗口内几乎全无效：
+  //         S2 覆盖 98.0% → 1.3%、High Flood 归零、面积虚涨 +230%。
+  //         这类"个别景把整场拖走"的问题必须能手工压回，所以加这个开关。
   var s2Source = 'NONE';
   var s2Col = s2srCol;
-  if (avail.s2_sr_count > 0) {
+  var forcedS2 = ev.s2Source ? String(ev.s2Source).toUpperCase() : null;
+  if (forcedS2 === 'L1C') {
+    s2Source = 'S2_HARMONIZED(L1C/TOA)';
+    s2Col = s2l1cCol;
+    print('【改动30】S2 数据源被事件表强制指定为 L1C（本窗口 L2A 景数 = '
+      + avail.s2_sr_count + '）');
+  } else if (forcedS2 === 'L2A') {
+    s2Source = 'S2_SR_HARMONIZED(L2A)';
+    s2Col = s2srCol;
+    print('【改动30】S2 数据源被事件表强制指定为 L2A（本窗口 L1C 景数 = '
+      + avail.s2_l1c_count + '）');
+  } else if (avail.s2_sr_count > 0) {
     s2Source = 'S2_SR_HARMONIZED(L2A)';
     s2Col = s2srCol;
   } else if (avail.s2_l1c_count > 0) {
     s2Source = 'S2_HARMONIZED(L1C/TOA)';
     s2Col = s2l1cCol;
+  }
+  // 强制指定的源若在本窗口内一景都没有，明确报出来（否则后面只会得到空集合、静默失败）
+  if (forcedS2 && s2Col.size().getInfo() === 0) {
+    print('⚠ ' + ev.name + '：事件表强制指定的 S2 源（' + forcedS2
+      + '）在本窗口内 0 景，请改回自动选择或调整窗口。');
   }
 
   print('────────── ' + ev.name + '（' + ev.year + '）──────────');
@@ -551,18 +639,20 @@ function buildEvent(ev) {
   print('  S1 后窗 ' + w.s1PostStartStr + ' ~ ' + w.s1PostEndStr
     + '（' + w.s1PostDays + '天，搜索窗口；实际合成 = 最早 S1 之后 8 天）');
   print('  S2 后窗 ' + w.s2PostStartStr + ' ~ ' + w.s2PostEndStr
-    + '（' + w.s2PostDays + '天，【改动24】只取最早 5 天）');
+    + '（' + w.s2PostDays + '天；常规 ' + S2_POST_PAD_DAYS
+    + ' 天，被截断/合并的事件按事件表取值【改动25/28】；光学口径 = 逐景指数取 '
+    + S2_INDEX_STAT + '）');
   print('数据可用性:', avail);
   print('S2 数据源: ' + s2Source);
 
   // 【改动24】S2 窗口缩短后的连带风险：窗口内一景都没有 → 没有光学水体证据，
   //   High Flood 必为 0、SAR 候选全部落进 Medium Flood、High Non-Flood 也取不到样本。
-  //   出现这条警告时，要么给该事件手工指定 s2PostEnd，要么把 S2_POST_PAD_DAYS 放宽到 8~10 天。
+  //   出现这条警告时，给该事件手工指定 s2PostStart / s2PostEnd 调窗口，或核对事件表里的时间。
   if (avail.s2_sr_count === 0 && avail.s2_l1c_count === 0) {
     print('⚠ ' + ev.name + '：S2 后窗口 ' + w.s2PostStartStr + ' ~ '
       + w.s2PostEndStr + ' 内没有可用影像 → 该时段没有光学水体证据，'
       + 'High Flood 会是 0，SAR 候选全部落入 Medium Flood。');
-    print('   建议：为该事件手工指定 s2PostEnd，或临时放宽 S2_POST_PAD_DAYS（如 8~10 天）。');
+    print('   建议：为该事件手工指定 s2PostStart / s2PostEnd，或核对事件表里的起止时间。');
   }
 
   // 后时相审计：后窗口有影像、但没有一景晚于事件结束
@@ -680,20 +770,45 @@ function buildEvent(ev) {
   //   var vvThreshold = -4.0;  var vhThreshold = -3.5;
 
  
-  // 4.5 光学证据
+  // 4.5【改动25/26】光学证据（逐景算指数 → 时间维取统计量）
   // ----------------------------------------------------------
 
-  
-  var s2 = s2Col.median().clip(roi);
+  // 逐景先算指数，再在时间维取统计量（S2_INDEX_STAT = 'max' / 'median'）：
+  //   每景输出 [NDVI, MNDWI, S2_Valid]；S2_Valid 是该景"云掩膜后仍有观测"的 0/1 指示带。
+  //   【改动26】S2_Valid 只作为逐景指示收集，最终**恒取 max**（见下），
+  //     含义 = "窗口内至少有一次有效观测"，与原 temp1.5 的 s2Valid 语义完全一致。
+  var s2IdxCol = s2Col.map(function (im) {
+    var valid = im.select('B3').mask().unmask(0).gt(0);
+    return im.normalizedDifference(['B8', 'B4']).rename('NDVI')
+      .addBands(im.normalizedDifference(['B3', 'B11']).rename('MNDWI'))
+      .addBands(valid.rename('S2_Valid'));
+  });
 
-  var s2Valid = s2.select('B3').mask().unmask(0).gt(0).rename('S2_Valid');
-  var ndvi = s2.normalizedDifference(['B8', 'B4']).rename('NDVI');
-  var mndwi = s2.normalizedDifference(['B3', 'B11']).rename('MNDWI');
+  // 指数（NDVI / MNDWI）按 S2_INDEX_STAT 取时间维统计量；S2_Valid 不参与该统计量。
+  //   （s2Idx 里仍带一条 S2_Valid 带，但它已不再被使用，有效性统一走下面的 max 口径。）
+  var s2Idx = ((S2_INDEX_STAT === 'median') ? s2IdxCol.median() : s2IdxCol.max())
+    .clip(roi);
+
+  // 【改动26】有效覆盖与统计量解耦（修复）
+  //   旧写法 `s2Idx.select('S2_Valid')` 会让 0/1 指示带跟着一起被 median 折叠：
+  //     "窗口内至少 1 景有效" 被悄悄变成 "超过一半的景有效"。
+  //   同一批影像、同一个窗口，S2 有效覆盖会凭空下降——实测 18 天档（Summary7）：
+  //     2020_0705 86.5% → 34.5%、2021_0823 99.8% → 91.9%（其余 3 场几乎不变）。
+  //   覆盖率一掉，SAR 洪水候选就大批落入 Medium Flood（面积虚涨）、非洪涝类同步漂移，
+  //   于是 S2_INDEX_STAT='median' 的对照会同时改动"口径"和"覆盖"两个变量，无法归因。
+  //   恒取 max 之后：无论统计量切到哪一档，s2_valid_px 与 Medium 两类都与 'max' 档完全一致。
+  var s2Valid = s2IdxCol.select('S2_Valid').max().unmask(0).gt(0).rename('S2_Valid');
+  var ndvi = s2Idx.select('NDVI').rename('NDVI');
+  var mndwi = s2Idx.select('MNDWI').rename('MNDWI');
 
   var opticalFlood = mndwi.gt(MNDWI_THRESHOLD).unmask(0).and(s2Valid)
     .rename('Optical_Flood');
   var opticalNonWater = mndwi.lt(0).unmask(0).and(s2Valid)
     .rename('Optical_NonWater');
+
+  // 口径提醒：逐景取 max 之后 MNDWI 整体上移，"非水体"（MNDWI < 0）这一条件更难满足，
+  //   负样本（尤其 High Non-Flood）会明显减少——那些"窗口内出现过水体信号"的像元会退出训练集，
+  //   属于口径变化带来的预期副作用，跨版本比面积/样本数时要一并考虑。
 
   // ----------------------------------------------------------
   // 4.6 DEM / 坡度 / JRC 永久水体
@@ -847,7 +962,9 @@ function buildEvent(ev) {
     .addBands(mediumFlood01.toInt().rename('n_medium_flood'))
     .addBands(highNonFlood01.toInt().rename('n_high_nonflood'))
     .addBands(mediumNonFlood01.toInt().rename('n_medium_nonflood'))
-    .addBands(s2Valid.toInt().rename('n_s2valid'));
+    .addBands(s2Valid.toInt().rename('n_s2valid'))
+    // 【改动27】SAR 有效像元数（= 面积加权），作为 S2 覆盖率的分母，同一次 reduceRegion 取回
+    .addBands(s1Valid.unmask(0).toInt().rename('n_valid'));
 
   var counts = countImage.reduceRegion({
     reducer: ee.Reducer.sum(),
@@ -961,7 +1078,43 @@ function buildEvent(ev) {
   summary.status = (nSamples > 0) ? 'OK' : 'NO_SAMPLE';
 
   // ----------------------------------------------------------
-  // 4.15【改动22】诊断输出（DIAG = true 时才跑）
+  // 4.15【改动27】S2 光学覆盖质控（每场自动标记，不再靠人工比对）
+  //   两个量都在 JS 侧算（counts 已经从一次 reduceRegion 取回，不额外增加阻塞调用）：
+  //     s2_cover_valid_frac = S2 有效像元 / SAR 有效像元
+  //     high_flood_share    = High / (High + Medium)，正样本的"光学背书纯度"
+  //   标记规则：
+  //     NO_OPTICAL     —— 覆盖率 < 5%，或正样本 High 占比 = 0（标签退化成纯 SAR 推断）
+  //     LOW_S2_COVER   —— 覆盖率 < 50%，或 High 占比 < 30%（光学证据明显不足）
+  //     OK             —— 其余
+  //   注：`status` 列保持旧语义（OK / NO_SAMPLE / SKIPPED_NO_S1）不变，
+  //       质控结果单独放 `s2_qc_flag`，这样新旧汇总表在 status 上仍可直接对照。
+  // ----------------------------------------------------------
+  var nValidPx = counts.n_valid || 0;
+  var nFloodTot = counts.n_flood || 0;
+  var s2CoverFrac = (nValidPx > 0) ? (counts.n_s2valid || 0) / nValidPx : 0;
+  var highFloodShare = (nFloodTot > 0) ? (counts.n_high_flood || 0) / nFloodTot : 0;
+
+  summary.n_valid_px = nValidPx;
+  summary.s2_cover_valid_frac = s2CoverFrac;
+  summary.high_flood_share = highFloodShare;
+
+  var noOptical = (nFloodTot > 0)
+    && (s2CoverFrac < NO_OPTICAL_COVER || highFloodShare === 0);
+  var lowS2Cover = (s2CoverFrac < LOW_S2_COVER_MIN)
+    || (nFloodTot > 0 && highFloodShare < MIN_HIGH_FLOOD_SHARE);
+  summary.s2_qc_flag = noOptical ? 'NO_OPTICAL' : (lowS2Cover ? 'LOW_S2_COVER' : 'OK');
+
+  if (noOptical || lowS2Cover) {
+    print('⚠ ' + ev.name + '：S2 光学证据不足（s2_qc_flag = ' + summary.s2_qc_flag + '）'
+      + '—— S2 有效覆盖 ' + (s2CoverFrac * 100).toFixed(1) + '%（阈值 '
+      + (LOW_S2_COVER_MIN * 100) + '%）、正样本 High 占比 '
+      + (highFloodShare * 100).toFixed(1) + '%（阈值 ' + (MIN_HIGH_FLOOD_SHARE * 100)
+      + '%）。该事件的正样本多为"无光学背书"的 Medium Flood，标签语义与光学双确认事件不同，'
+      + '建议核实 S2 源/窗口（看上面的 s2_source / s2_count / s2_sr_date 打印）后重跑，或单独剔除。');
+  }
+
+  // ----------------------------------------------------------
+  // 4.16【改动22】诊断输出（DIAG = true 时才跑）
   //   正式跑数据保持 false；复核单个事件时打开，看四项：
   //   (1) 逐景偏移一览  —— QC：有无偏移离群的景、两条轨道差多少
   //   (2) 5 档阈值敏感性 —— 论文稳健性表（比值已进 summary，这里是全表）
@@ -1037,6 +1190,46 @@ function buildEvent(ev) {
     s1_post: s1_post
   };
 }
+
+// ============================================================================
+// 【改动29】相邻暴雨的"S2 后窗越界"启动自检（纯 JS，不连 GEE，脚本加载时跑一次）
+//   背景：2020_0628 / 2024_0621 都是靠**手工** s2PostEnd 躲开"下一场暴雨"的。这种"靠人记得"
+//   的约束必然会有漏网的：Summary8 里就发现 2025_0522 的 S2 后窗（止于 2025-06-09）
+//   已经伸进了 2025_0607 的暴雨时段（起于 2025-06-07），重叠 2.7 天，此前无人察觉。
+//   而逐景 max 取的是窗口内的**峰值**，重叠就等于把后一场的水并进前一场的标签
+//   （同一批像元被两个事件重复打标 → 标签混淆；若两场分处训练/验证两侧 → 训练集泄漏）。
+//   这里把全部事件两两比一遍：凡"另一场的暴雨起点落在本场 S2 后窗之内"就报警。
+//   处置：给前一场指定 s2PostEnd（截到后一场起点之前），或把两场合并为一场（见【改动28】）。
+// ============================================================================
+function reportS2WindowOverlaps() {
+  var MS_DAY = 24 * 3600 * 1000;
+  var hits = [];
+  for (var i = 0; i < EVENTS.length; i++) {
+    var a = EVENTS[i];
+    var aEnd = bjToUTC(a.end).getTime();
+    var aS2End = a.s2PostEnd ? bjToUTC(a.s2PostEnd).getTime()
+      : aEnd + S2_POST_PAD_DAYS * MS_DAY;
+    for (var j = 0; j < EVENTS.length; j++) {
+      var b = EVENTS[j];
+      var bStart = bjToUTC(b.start).getTime();
+      // 只关心"在本场结束之后、且落在本场 S2 后窗之内"的其它暴雨起点
+      if (bStart > aEnd && bStart < aS2End) {
+        hits.push(a.name + ' 的 S2 后窗（止于 ' + isoDate(new Date(aS2End))
+          + '）与 ' + b.name + '（起于 ' + b.start + '）重叠 '
+          + ((aS2End - bStart) / MS_DAY).toFixed(1) + ' 天');
+      }
+    }
+  }
+  if (hits.length === 0) {
+    print('【改动29】S2 后窗越界自检：未发现相邻暴雨窗口重叠。');
+  } else {
+    print('⚠ 【改动29】S2 后窗越界自检：发现 ' + hits.length
+      + ' 处与下一场暴雨重叠——逐景 max 会把后一场的水并进前一场标签，'
+      + '请给前一场指定 s2PostEnd（截到后一场起点之前）或把两场合并为一场。');
+    hits.forEach(function (h) { print('   · ' + h); });
+  }
+}
+reportS2WindowOverlaps();
 
 
 // 5.【改动12】逐时段执行（原 temp.js 只执行一次 2016 事件）
