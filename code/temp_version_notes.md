@@ -1,7 +1,7 @@
-# 武汉洪涝伪标签脚本（temp 系列）版本与诊断说明
+# 武汉洪涝伪标签脚本（temp / pseudo_labels 系列）版本与诊断说明
 
-> 整理自 2026-09-15 ~ 09-18 的调试过程，记录 `doc/temp*.js` 各版本的功能增量、所用诊断、已验证结论与待办事项。
-> 仅新增本文档，未改动任何脚本文件。
+> 整理自 2026-09-15 ~ 09-21 的调试过程，记录 `code/` 下各版本的功能增量、所用诊断、已验证结论与待办事项。
+> 2026-09-21 增补：新增主版本 `code/pseudo_labels1.js`（【改动24】S1/S2 后窗口拆分，依据 `code/rivision.md`），原 `temp1.5.js` 转为存档。
 
 ---
 
@@ -30,7 +30,9 @@
 | `code/temp1.2.js` | 存档 | 后时相改为「事件后最早 8 天 + 填充值掩膜 `updateMask(gt(-50))`」 |
 | `code/temp1.3.js` | 存档 | 新增【改动18】`dropFill` 公共化、【改动19】全局去偏、【改动20】覆盖率/偏移进 summary；修正导出 `selectors` 写反 |
 | `code/temp1.4.js` | 存档 | 新增【改动21】`DEBIAS_MODE` 三档 + 逐景去偏 `debiasOne` |
-| **`code/temp1.5.js`** | **当前主版本** | 新增【改动22】`DIAG` 开关 + QC 指标进 summary、【改动23】两个面积列（km²）、perImage 残差归零、全量运行配置；修复「影像算术丢属性」报错 |
+| `code/temp1.5.js` | 存档 | 新增【改动22】`DIAG` 开关 + QC 指标进 summary、【改动23】两个面积列（km²）、perImage 残差归零、全量运行配置；修复「影像算术丢属性」报错 |
+| **`code/pseudo_labels1.js`** | **当前主版本** | 由 `temp1.5.js` 复制后改造，按 `code/rivision.md` 落地【改动24】：S1/S2 后窗口拆分（`S1_POST_PAD_DAYS`=18 / `S2_POST_PAD_DAYS`=5）、窗口字段与 summary 列同步拆开、默认只跑 5 个对照事件 |
+| `code/rivision.md` | 修改依据 | 「Sentinel-1 与 Sentinel-2 后时相窗口分离」修改建议（改动24 的来源） |
 | `code/temp_version_notes.md` | 本文档 | 版本与诊断说明 |
 | `code/events.js`、`code/flood_pseudolabel.js` | 搁置 | 模块化方案（`require('users/<user>/<folder>:<script>')`），因 `Module not found` 未启用 |
 | `doc/console.docx`、`doc/console1.1.docx` | 记录 | 两轮全量 Console 输出（首轮 19 事件；改动16/17 后一轮） |
@@ -40,17 +42,19 @@
 
 ---
 
-## 3. 主流程（以 temp1.5 为准）
+## 3. 主流程（以 pseudo_labels1 为准）
 
 1. **事件循环**：`EVENTS`（19 个时段）→ `buildEvent(ev)` 逐个执行；`RUN_EVENT_NAMES` 可只跑指定时段。
-2. **窗口推导**（`eventWindows`）：事件时间是北京时间，`bjToUTC` 换算成 UTC。
+2. **窗口推导**（`eventWindows`）：事件时间是北京时间，`bjToUTC` 换算成 UTC；**【改动24】后窗口已按传感器拆成两个**。
    - 前窗 = 事件开始 − `PRE_GAP_DAYS`(5) − `PRE_WINDOW_DAYS`(24) ~ 事件开始 − 5 天
-   - 后窗 = **事件结束** ~ 事件结束 + `POST_PAD_DAYS`(18)（事件表里写了 `preStart/preEnd/postStart/postEnd` 的以手工值为准）
+   - S1 后窗 = **事件结束** ~ 事件结束 + `S1_POST_PAD_DAYS`(18)（只做搜索，实际合成仍是"最早 S1 之后 8 天"）
+   - S2 后窗 = **事件结束** ~ 事件结束 + `S2_POST_PAD_DAYS`(5)
+   - 事件表里的 `preStart/preEnd` 照旧作用于前窗，`postStart/postEnd` 现在**只作用于 S1**；S2 可用新增的 `s2PostStart/s2PostEnd` 单独指定
 3. **S1 前时相**：`post/pre` 双窗口取 `filterBounds` + IW + VV/VH → `dropFill` 去除切片填充值 → `median()` 作为基线。
 4. **S1 后时相**：取"事件后最早 8 天"的影像（跨 orbit 40 与 113，掩膜并集才盖满研究区）→ `dropFill` → **逐景去偏** → `median()`。
 5. **差值**：`VV_diff = 后 − 前`、`VH_diff = 后 − 前`（用去偏后的后时相）；`VV_ratio` 仍由原始绝对后向散射算，保持物理可解释。
 6. **有效像元**：`s1Valid` = 前后时相 VV/VH 四个掩膜取交集，只有这些像元参与判识。
-7. **S2 光学**：后窗口的 L2A（无则 L1C）→ `QA60` 云掩膜 → 云量 ≤ 90% → 中值 → `NDVI`、`MNDWI`、`S2_Valid` 指示带。
+7. **S2 光学**：**S2 后窗口（事件后最早 5 天）** 的 L2A（无则 L1C）→ `QA60` 云掩膜 → 云量 ≤ 90% → 中值 → `NDVI`、`MNDWI`、`S2_Valid` 指示带。
 8. **判识**：
    - SAR 洪水候选 `sarFlood01` = `VV_diff < -4.0` ∧ `VH_diff < -3.5` ∧ `s1Valid`
    - High Flood = 候选 ∧ 光学水 ∧ 非永久水体 ∧ 低坡度
@@ -62,7 +66,7 @@
 
 ---
 
-## 4. 全局参数表（temp1.5）
+## 4. 全局参数表（pseudo_labels1）
 
 | 参数 | 值 | 含义 |
 |---|---|---|
@@ -76,12 +80,14 @@
 | `SAMPLE_SCALE` | 100 m | 抽样与统计尺度 |
 | `POINTS_PER_CLASS` | 2000 | 每类最多抽样点数 |
 | `SAMPLE_SEED` | 42 | 抽样随机种子 |
-| `PRE_WINDOW_DAYS` / `PRE_GAP_DAYS` / `POST_PAD_DAYS` | 24 / 5 / 18 天 | 前窗长度 / 前窗与事件间隔 / 后窗向后长度 |
+| `PRE_WINDOW_DAYS` / `PRE_GAP_DAYS` | 24 / 5 天 | 前窗长度 / 前窗与事件间隔 |
+| `S1_POST_PAD_DAYS` | 18 天 | **【改动24】** Sentinel-1 后时相**搜索**窗口长度（实际合成仍是"最早 S1 之后 8 天"，见 `post8`） |
+| `S2_POST_PAD_DAYS` | 5 天 | **【改动24】** Sentinel-2 后时相窗口长度（"事件后最早 3~5 天"取上界 5；改 3 会更贴洪峰但可能只剩 1 景甚至 0 景） |
 | `TZ_OFFSET_HOURS` | 8 | 北京时 → UTC |
 | `S1_FILL_DB` | −50 dB | 低于此值视为 GRD 切片填充值 |
 | `DEBIAS_MODE` | `'perImage'` | 去偏模式：`none` / `global` / `perImage` |
 | `DIAG` | `false` | 诊断输出开关 |
-| `RUN_EVENT_NAMES` | `null` | 全量跑 19 个时段；单跑某事件时填数组，如 `['Wuhan_2020_0705']` |
+| `RUN_EVENT_NAMES` | 5 个对照事件 | **【改动24】** 默认只跑 `2021_0823 / 2022_0627 / 2023_0618 / 2023_0719 / 2020_0705`（4 个低面积事件 + 1 个大面积对照）；对照通过后改回 `null` 再全量跑 19 个时段 |
 | `VIEW_EVENT_NAME` | `'Wuhan_2020_0705'` | Map 上显示哪个时段；**必须是字符串**（数组会让 `name ===` 判断恒为 false） |
 | `EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY` | 均为 `true`，导出块**已取消注释** | 全量会产生 21 个任务（1 合并 + 1 汇总 + 19 每事件） |
 
@@ -131,7 +137,7 @@
 - 场景级偏移块拆成两半：`!== 'none'` 时测量并记录，`=== 'global'` 时才真正应用 —— `perImage` 模式下该值变成"校正残差"，用作自检
 - `summary` 增加 `debias_mode` 列
 
-### temp1.4.js → temp1.5.js：诊断收敛 + QC 指标进表（当前主版本）
+### temp1.4.js → temp1.5.js：诊断收敛 + QC 指标进表
 
 **A. 诊断收敛**（改动 155 增 / 43 删）
 
@@ -178,6 +184,34 @@
 | QC 单调性（−3.5 / −4.0 / −4.5） | 1642.5 > 1366.3 > 1161.4 | 11,184 > 10,785 > 10,416 |
 | 雨量 | 117.2 mm | 432.5 mm |
 
+### temp1.5.js → pseudo_labels1.js：【改动24】S1/S2 后窗口拆分（当前主版本）
+
+**依据**：`code/rivision.md`（"Sentinel-1 与 Sentinel-2 后时相窗口分离修改建议"）。做法是**先复制 `temp1.5.js` 为 `pseudo_labels1.js`，再在副本上改**，`temp1.5.js` 原地保留为存档。
+
+**问题**：`temp1.5` 用同一个 `POST_PAD_DAYS = 18` 同时控制 S1 和 S2 的后窗口。洪水消退远快于 SAR/S2 重访，18 天窗口里后半段的 S2 影像多半已经是"退水后"状态，中值 MNDWI 因此偏低 → `SAR 检测到洪水 但 MNDWI 没测到水` → High Flood 被排除、洪涝面积被低估。而直接把 `POST_PAD_DAYS` 改成 5 又会砍掉 S1 的重访余量（S1 重访 12 天，5 天内部分事件拿不到后时相影像）。
+
+**改法（S1 保持 18 天，S2 单独收到 5 天）**：
+
+| # | 位置 | 改动 |
+|---|---|---|
+| 1 | 全局参数 | `POST_PAD_DAYS = 18` → **`S1_POST_PAD_DAYS = 18` + `S2_POST_PAD_DAYS = 5`** |
+| 2 | `eventWindows()` | 分别算 `s1PostStart/s1PostEnd`、`s2PostStart/s2PostEnd`（起点都在事件结束；`ev.postStart/postEnd` 只作用于 S1，S2 新增 `ev.s2PostStart/s2PostEnd` 覆盖项）；返回值与字符串、天数同步拆成 `s1Post*` / `s2Post*` |
+| 3 | S1 数据获取 | `getS1Collection(w.s1PostStart, w.s1PostEnd)` —— 18 天搜索窗口不变 |
+| 4 | S2 数据获取 | `getS2Collection()` 改 `.filterDate(w.s2PostStart, w.s2PostEnd)` —— 只搜"事件结束 + 5 天" |
+| 5 | `post8`（S1 实际合成） | **未改动**：仍是"最早 S1 之后 8 天"。18 天只是搜索范围，不是实际参与合成的长度 |
+| 6 | 后时相审计 | `s1_post_after_count/dates` 的 `filterDate` 由 `w.postEnd` 改为 `w.s1PostEnd` |
+| 7 | summary 与打印 | `post_window_utc` / `post_days` 沿用旧列名但含义收敛为「S1 后窗口」，新增 `s2_post_window_utc` / `s2_post_days` 两列；Console 把 S1、S2 两个窗口分行打印 |
+| 8 | 新增警告 | S2 窗口内一景都没有时打印警告（此时 High Flood 必为 0、SAR 候选全落 Medium Flood、High Non-Flood 也取不到样本），提示指定 `s2PostEnd` 或临时放宽 `S2_POST_PAD_DAYS` |
+| 9 | 运行配置 | `RUN_EVENT_NAMES` 由 `null` 改为 **5 个对照事件**（`2021_0823`、`2022_0627`、`2023_0618`、`2023_0719`、`2020_0705`），对应 rivision.md 第 11 节"先对照、后全量"；对照通过后改回 `null` |
+
+**已做的静态校验（未连 GEE）**：
+
+- `node --check` 通过（语法无误）；全文件已无 `w.postStart` / `w.postEnd` / `w.postDays` / `POST_PAD_DAYS` 残留
+- 用假 `ee` 把 `eventWindows()` 单独跑了一遍，5 个对照事件与全部 19 个事件的窗口为：S1 = 事件结束 + **18 天**、S2 = 事件结束 + **5 天**（例如 `2023_0618`：S1 `2023-06-18 ~ 2023-07-06`、S2 `2023-06-18 ~ 2023-06-23`）
+- 手工窗口事件 `2016_0630`（`postStart/postEnd` 写死在事件表里）：S1 仍是 `2016-07-06 ~ 2016-07-24`（18.6 天，按手工值），S2 自动收到 `2016-07-06 ~ 2016-07-11`（5 天）——正是本次要修的那一类
+
+**尚未做**：GEE 上重跑 5 个对照事件、比对指标（见第 8 节待办）。
+
 ---
 
 ## 6. 诊断工具箱（用过什么、结论是什么）
@@ -216,7 +250,7 @@
 12. **面积口径**：`valid_area_km2` 与武汉官方面积吻合（8,581.57 vs 8,569 km²，差 0.15%）；`n_flood_px × 0.01` 系统性偏大约 16%（比值 0.86），面积报告一律用 `flood_area_km2`。
 13. **perImage 残差**：逐景校正后复合仍留 +0.25 dB 残差（4 景逐像元取中值是非线性组合），已在本版扣除。
 14. **全量 19 事件结果**：全部 `status=OK`、无 skipped；洪涝面积与雨量的一致性跨度为 34 倍（每 100 mm 雨量对应 1.2 ~ 41.4 km²）→ 各事件标签不可直接混用，详见 `csvdata/事件筛查与训练集划分.md`。
-15. **机制发现**：洪涝面积的上限主要由"S2 在事件后窗口是否测到水"决定，而非 SAR 阈值——4 个低面积事件（2021_0823、2022_0627、2023_0618、2023_0719）的 `n_medium_flood_px = 0`、S2 全域有效，且放宽阈值到 −3.5 dB 面积只增 4%~23%。
+15. **机制发现**：洪涝面积的上限主要由"S2 在事件后窗口是否测到水"决定，而非 SAR 阈值——4 个低面积事件（2021_0823、2022_0627、2023_0618、2023_0719）的 `n_medium_flood_px = 0`、S2 全域有效，且放宽阈值到 −3.5 dB 面积只增 4%~23%。→ 这条结论直接催生【改动24】（把 S2 窗口从 18 天收到 5 天），见第 5 节；**验证结果待补**（需在 GEE 上重跑 5 个对照事件）。
 
 ---
 
@@ -228,8 +262,10 @@
 | ✅ 已完成 | 锚点事件验证 | `Wuhan_2020_0705`：92.71 km² vs 2025_0607 的 11.73 km²（雨量 3.7 倍 → 面积 7.9 倍） |
 | ✅ 已完成 | 全量运行 | 19 事件全部 OK，汇总表见 `csvdata/` |
 | ✅ 已完成 | 跨事件一致性评估 | 见 `csvdata/事件筛查与训练集划分.md`（训练候选 10 / 仅验证 7 / 剔除 2） |
-| **高** | 缩短 S2 窗口 | 把 S2 从"整个后窗口（18 天）"改为"事件后最早 3~5 天"，与 S1 的 earliest-8-days 对齐；先重跑 4 个低面积事件 + 2020_0705 对照 |
+| 🔄 待验证 | 缩短 S2 窗口 | 代码已落地（【改动24】，`pseudo_labels1.js`：S2 收到"事件后最早 5 天"，S1 仍 18 天）。**下一步**：在 GEE 上跑默认的 5 个对照事件，逐项比对新旧结果——`s2_count`、`s2_valid_px`、`n_high_flood_px`、`n_medium_flood_px`、`n_flood_px`、`flood_area_km2`、`flood_area_km2 / (rain_ref_mm/100)`、`s1_valid_cover`、S1 前后影像数。预期：4 个低面积事件的 High Flood 明显回升（面积随之回升），部分像元因景数变少/云洞变多转入 Medium；`2020_0705` 作为对照不应出现异常 |
+| 🔄 待验证 → 后续 | 全量重跑与 A/B/C 重划 | 5 事件对照稳定后，把 `RUN_EVENT_NAMES` 改回 `null` 重跑 19 个事件，再按 `csvdata/事件筛查与训练集划分.md` 的口径重做训练候选 10 / 仅验证 7 / 剔除 2 的划分；注意新旧汇总表列已不同（新增 `s2_post_window_utc` / `s2_post_days`），别把两版 CSV 直接 concat |
 | **高** | 新增 `n_sar_cand_px` 列 | 只带 `s1Valid` 的 SAR 候选数，用于区分"S2 把像元挡掉"（可修）与"过境时水已退"（物理限制） |
+| 中 | S2 5 天窗口可能"一景都没有" | 缩短后部分事件（尤其 2016–2017 这类 L2A 缺失的年份，回退 L1C 也未必有）可能整窗口无 S2 → High Flood 恒为 0、SAR 候选全部落入 Medium Flood。脚本已加警告；必要时给该事件手工指定 `s2PostEnd`，或把 `S2_POST_PAD_DAYS` 临时放宽到 8~10 天 |
 | 中 | 修 2 个覆盖不足事件 | `2016_0601`（后窗只取到单日，需延长后窗口或改为"最早 2 条不同轨道"）；`2024_0628`（前窗仅 4 景，需延长 `PRE_WINDOW_DAYS` 或手工指定） |
 | 中 | 事件定义回查 | 至少核对 `Wuhan_2025_0607`（雨量注记是 6/21 数据）、`Wuhan_2017_0608`（`rain_ref_mm` 为空）、2016 两个事件 |
 | 中 | 分类不平衡处理 | 少量事件正类仅 200~500 像元；合并训练时按事件配额或分层加权，评价用洪涝类 F1/IoU |
@@ -240,13 +276,16 @@
 
 ## 9. 使用说明
 
-### 9.1 三个开关
+### 9.1 几个开关
 
 | 场景 | 设置 |
 |---|---|
 | 正式出数据 | `DIAG = false`（默认） |
 | 复核单个事件 | `DIAG = true` |
 | 去偏三档对照 | 改 `DEBIAS_MODE`：`'none'` / `'global'` / `'perImage'` |
+| 5 事件对照（**当前默认**） | `RUN_EVENT_NAMES` 保持现有数组（2021_0823 / 2022_0627 / 2023_0618 / 2023_0719 / 2020_0705） |
+| 全量 19 事件 | 把 `RUN_EVENT_NAMES` 改成 `null` |
+| 缩短 S2 更狠一点 | 把 `S2_POST_PAD_DAYS` 由 5 改成 3（更贴洪峰，但可能只剩 1 景甚至 0 景） |
 
 > 参照点：`Wuhan_2025_0607` 在 `none` / `global` 下分别为 887 / 1347 个洪涝像元，可用于验证改动没有引入偏差。
 
@@ -255,7 +294,9 @@
 **样本 CSV（`SAMPLE_SELECTORS`）**：`event_id, year, storm_start_bj, storm_end_bj, area, label, conf_flood, conf_nonflood, VV, VH, VV_diff, VH_diff, VV_ratio, NDVI, MNDWI, DEM, slope, S2_Valid`
 （`VV`/`VH`/`VV_ratio` 是原始绝对后向散射；`VV_diff`/`VH_diff` 是背景参考化后的变化量）
 
-**汇总 CSV（`SUMMARY_SELECTORS`，共 35 列）**：事件与窗口信息、S1/S2 计数与来源、各类像元数（`n_flood_px` / `n_nonflood_px` / `n_high_flood_px` / `n_medium_flood_px` / `n_high_nonflood_px` / `n_medium_nonflood_px` / `s2_valid_px`）、`s1_valid_cover`、`vv_offset_db`、`vh_offset_db`、`debias_mode`、`offset_spread_db`、`n_flood_at_m35`、`n_flood_at_m45`、`flood_sens_ratio`、**`flood_area_km2`**、**`valid_area_km2`**、`sample_count`、`status`
+**汇总 CSV（`SUMMARY_SELECTORS`，共 36 列）**：事件与窗口信息、S1/S2 计数与来源、各类像元数（`n_flood_px` / `n_nonflood_px` / `n_high_flood_px` / `n_medium_flood_px` / `n_high_nonflood_px` / `n_medium_nonflood_px` / `s2_valid_px`）、`s1_valid_cover`、`vv_offset_db`、`vh_offset_db`、`debias_mode`、`offset_spread_db`、`n_flood_at_m35`、`n_flood_at_m45`、`flood_sens_ratio`、**`flood_area_km2`**、**`valid_area_km2`**、`sample_count`、`status`
+
+> 【改动24】汇总表新增 **`s2_post_window_utc`** / **`s2_post_days`** 两列（共 36 列，原 34 列 + 2），用来记录 S2 的 5 天窗口；`post_window_utc` / `post_days` 沿用旧列名，含义收敛为「Sentinel-1 后窗口」，数值不变。
 
 ### 9.3 诊断开关打开时会多做什么
 
