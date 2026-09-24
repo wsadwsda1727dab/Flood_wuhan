@@ -106,6 +106,16 @@ var DIAG = false;
 //   其余事件不命中、零额外开销，所以正式全量跑也可以保持 true；不想看时置 false。
 var S2_TAIL_DIAG = true;
 
+// ---- 【改动32】S2 云掩膜口径（回答"标签里的水有多少是残云撑起来的"）----
+//   'QA60'         ：原口径 —— QA60 bit10（厚云）+ bit11（卷云）都为 0 才算晴空；
+//                    L1C 没有 SCL 波段，走 L1C 的事件只能用这一档。
+//   'SCL_AND_QA60' ：L2A 有 SCL 波段，额外排除 1 饱和 / 3 云影 / 8 中概率云 / 9 高概率云 /
+//                    10 卷云 / 11 雪，并与 QA60 取交集（更严）。
+//   用法：同一事件在两种口径下各跑一次，比较 `s2_cover_valid_frac` / `high_flood_share` / 面积——
+//        若换成 SCL 后 High 面积塌掉，说明标签是"逐景 max"把残云当水撑起来的。
+//   注意：L1C 无 SCL → 走 L1C 的事件自动退回 QA60（Console 会写明）。
+var S2_CLOUD_MASK = 'QA60';
+
 // ---- 时区 ----
 // 文档里的事件时间是北京时间，GEE 的 filterDate 按 UTC 处理，这里统一换算。
 var TZ_OFFSET_HOURS = 8;
@@ -379,6 +389,39 @@ var EVENTS = [
     // 5月22日刚下过一场暴雨，基线窗口往前挪
     preStart: '2025-04-25 00:00',
     preEnd: '2025-05-15 00:00'
+  },
+  // --------------------------------------------------------------------------
+  // 【改动33】"零暴雨"对照事件（isControl）——只回答一个问题：
+  //   `2022_0627`、`2023_0618` 标签里的水，是洪水还是季节性明水（泡田/灌溉/常年水面）+ 残云？
+  //   做法：把**完全同一套流程**跑在"事件表里没有任何暴雨"的同期窗口上：
+  //     若对照窗口也能产出量级相当的 High Flood → 那些水不是洪水撑起来的；
+  //     若对照窗口几乎为 0 → 说明标签确实由暴雨驱动（这才是想看到的）。
+  //   注意：
+  //     ① 默认全量**不跑**（EVENTS_TO_RUN 会过滤 isControl），只在 RUN_EVENT_NAMES 里点名才跑：
+  //          RUN_EVENT_NAMES = ['Wuhan_2022_0601_CTRL', 'Wuhan_2023_0525_CTRL']
+  //     ② 越界自检（【改动29】）与尾段诊断（【改动31】）都会跳过对照事件；
+  //     ③ 跑之前请用雨量记录确认这两个窗口确实没有暴雨（本事件表里它们附近没有暴雨时段）；
+  //     ④ 对照事件不进任何训练/验证划分，只作为"标签是不是季节性明水"的证据。
+  {
+    name: 'Wuhan_2022_0601_CTRL',
+    year: 2022,
+    isControl: true,
+    start: '2022-06-01 00:00',
+    end: '2022-06-01 02:00',
+    area: '对照：全市（无暴雨窗口）',
+    rain: '（对照事件：非暴雨期，仅用于估计季节性明水与残云）',
+    rainRefMM: null
+  },
+  {
+    // 窗口止于 2023-06-12，避开 06-18 的暴雨（那场 06-18 18:00 起）
+    name: 'Wuhan_2023_0525_CTRL',
+    year: 2023,
+    isControl: true,
+    start: '2023-05-25 00:00',
+    end: '2023-05-25 02:00',
+    area: '对照：全市（无暴雨窗口）',
+    rain: '（对照事件：非暴雨期；S2 后窗止于 06-12，避开 06-18 暴雨）',
+    rainRefMM: null
   }
 ];
 
@@ -576,10 +619,17 @@ function buildEvent(ev) {
   //   原 temp.js 只用 COPERNICUS/S2_SR_HARMONIZED，且不按云量筛选，
   //   2016 年没有 L2A 产品 → 原脚本 2016 时段拿不到任何 S2。
   // ----------------------------------------------------------
-  function maskS2(image) {
+  // 【改动32】两档云掩膜：QA60（原口径）/ QA60 ∧ SCL（更严，仅 L2A 有 SCL）
+  function maskS2(image, useScl) {
     var qa = image.select('QA60');
     var clear = qa.bitwiseAnd(1 << 10).eq(0)
       .and(qa.bitwiseAnd(1 << 11).eq(0));
+    if (useScl) {
+      var scl = image.select('SCL');
+      var bad = scl.eq(1).or(scl.eq(3)).or(scl.eq(8))
+        .or(scl.eq(9)).or(scl.eq(10)).or(scl.eq(11));
+      clear = clear.and(bad.not());
+    }
     return image.updateMask(clear);
   }
 
@@ -589,7 +639,7 @@ function buildEvent(ev) {
     return im.select('B3').mask().unmask(0).gt(0).rename('S2_Valid');
   }
 
-  function getS2Collection(id) {
+  function getS2Collection(id, useScl) {
     return ee.ImageCollection(id)
       .filterBounds(roi)
       // 【改动24/25】只取事件结束后 S2_POST_PAD_DAYS(18) 天：
@@ -597,11 +647,13 @@ function buildEvent(ev) {
       //   会把实际有水的像元算成 MNDWI 偏低（High Flood 漏检、面积低估）。
       .filterDate(w.s2PostStart, w.s2PostEnd)
       .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', S2_MAX_CLOUD))
-      .map(maskS2);
+      .map(function (im) { return maskS2(im, useScl); });
   }
 
-  var s2srCol = getS2Collection('COPERNICUS/S2_SR_HARMONIZED');
-  var s2l1cCol = getS2Collection('COPERNICUS/S2_HARMONIZED');
+  // 【改动32】L2A 才有 SCL；L1C 一律退回 QA60
+  var useSclSr = (S2_CLOUD_MASK === 'SCL_AND_QA60');
+  var s2srCol = getS2Collection('COPERNICUS/S2_SR_HARMONIZED', useSclSr);
+  var s2l1cCol = getS2Collection('COPERNICUS/S2_HARMONIZED', false);
 
   // ----------------------------------------------------------
   // 4.3数据可用性检查（每个时段单独检查一次，缺 S1 的时段跳过）
@@ -671,6 +723,13 @@ function buildEvent(ev) {
     + S2_INDEX_STAT + '）');
   print('数据可用性:', avail);
   print('S2 数据源: ' + s2Source);
+  // 【改动32】说明本场实际用的云掩膜（L1C 无 SCL → 即使开关打开也只能用 QA60）
+  print('S2 云掩膜: ' + S2_CLOUD_MASK
+    + ((S2_CLOUD_MASK === 'SCL_AND_QA60')
+      ? ((s2Source.indexOf('L1C') !== -1)
+        ? '（本场走 L1C，无 SCL → 实际只用 QA60）'
+        : '（QA60 ∧ SCL，更严）')
+      : '（QA60，原口径）'));
 
   // 【改动24】S2 窗口缩短后的连带风险：窗口内一景都没有 → 没有光学水体证据，
   //   High Flood 必为 0、SAR 候选全部落进 Medium Flood、High Non-Flood 也取不到样本。
@@ -1291,6 +1350,7 @@ function s2WindowOverlapHits(ev) {
   for (var j = 0; j < EVENTS.length; j++) {
     var b = EVENTS[j];
     if (b.name === ev.name) continue;
+    if (b.isControl) continue;      // 【改动33】对照事件不是暴雨，不参与越界判定
     var bStart = bjToUTC(b.start).getTime();
     // 只关心"在本场结束之后、且落在本场 S2 后窗之内"的其它暴雨起点
     if (bStart > aEnd && bStart < aS2End) {
@@ -1319,8 +1379,10 @@ function s2WindowOverlapHits(ev) {
 // ============================================================================
 function reportS2WindowOverlaps() {
   var hits = [];
-  for (var i = 0; i < EVENTS.length; i++) {
-    var a = EVENTS[i];
+  // 【改动33】只对真正的暴雨事件做越界自检（对照事件排除在外，否则会误报）
+  var stormEvents = EVENTS.filter(function (e) { return !e.isControl; });
+  for (var i = 0; i < stormEvents.length; i++) {
+    var a = stormEvents[i];
     s2WindowOverlapHits(a).forEach(function (h) {
       hits.push(a.name + ' 的 S2 后窗（止于 ' + isoDate(new Date(h.s2EndMs))
         + '）与 ' + h.name + '（起于 ' + h.startStr + '）重叠 '
@@ -1346,6 +1408,11 @@ if (RUN_EVENT_NAMES !== null) {
     return RUN_EVENT_NAMES.indexOf(ev.name) !== -1;
   });
   print('仅运行指定时段:', RUN_EVENT_NAMES);
+} else {
+  // 【改动33】全量运行 = 只跑 18 场暴雨；对照事件（isControl）必须点名才跑，
+  //   否则它们会混进汇总表、把"训练候选/仅验证"的划分搅乱。
+  EVENTS_TO_RUN = EVENTS.filter(function (ev) { return !ev.isControl; });
+  print('全量运行：暴雨事件 ' + EVENTS_TO_RUN.length + ' 场（对照事件需在 RUN_EVENT_NAMES 里点名）');
 }
 
 var results = EVENTS_TO_RUN.map(buildEvent);
