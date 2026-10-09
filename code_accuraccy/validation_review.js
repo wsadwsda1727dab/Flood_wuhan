@@ -3,14 +3,20 @@
 // validation_review.js —— 第二阶段：伪标签精度验证的「目视判读工作台」
 //   （第 7 步 人工判读 + 第 8 步 Reference / confidence 录入）
 // ----------------------------------------------------------------------------
-// 本文件由 code/validation_points.js 复制而来，前半部分（0~5 节与导出开关）与它
-// 完全一致：同一套事件表、阈值、窗口、抽样参数（300 / 类，seed = 20260927），
-// 因此这里生成的验证点与 validation_points.js 导出的 CSV 一一对应。
-// 与 validation_points.js 的差异只有 4 处，文件内均以「【第二阶段】」标注：
+// 本文件由 code/validation_points.js 复制而来，事件表、阈值、窗口与它一致；
+// 【改动34】之前，前半部分（0~5 节与导出开关）与它完全相同，判读点与
+// validation_points.js 导出的 CSV 一一对应。引入【改动34】后这条对应关系被有意打破：
+// 本文件同步了 Sentinel-1 预/后向散射约束，并把判读点改成按 5 层分层抽样
+// （含"版本差异层"——约束前判洪、约束后被删的像元，这类点在训练样本里根本不存在）。
+// 与 validation_points.js 的差异（文件内均以「【第二阶段】」「【改动34】」标注）：
 //   1) 顶部加本说明；
 //   2) 关闭伪标签样本 CSV 导出（EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY）；
 //   3) 去掉旧的"显示"块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 //   4) buildEvent 返回值里多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；
+//   5)【改动34】同步 4 个新阈值 + 新增判读分层带（stratum）/ 新旧标签（new_label、
+//      old_label、old_sar_flood）/ 事件前与事件后原始后向散射（VV_pre / VH_pre /
+//      VV_post_c / VH_post_c），判读点改从 reviewImage 上按层抽样；并按事件留出
+//      tune / valid 两组。
 // 文件末尾追加第二部分：判读面板 + Reference 录入 + 判读结果导出。
 // ============================================================================
 // 0. 研究区
@@ -25,6 +31,19 @@ Map.addLayer(DEFAULT_ROI, {color: 'black'}, 'Wuhan');
 // 判识阈值
 var VV_THRESHOLD = -4.0;       // VV 后-前 下降超过 4 dB
 var VH_THRESHOLD = -3.5;       // VH 后-前 下降超过 3.5 dB
+// 【改动34】Sentinel-1 IW GRD 预/后向散射初值约束（与 code/pseudo_labels1.js 逐条一致）
+//   判读台自带一份标签生成代码，不同步这 4 个阈值与 6 项条件的话，判读点仍按旧规则生成，
+//   评价对象就不是 Summary11，而是被改动前的旧规则。
+//   为什么需要它：只要求"相对下降"会把事件前就已经是水的像元（河湖、沟渠、坑塘、泡田、
+//   季节性明水、临时积水）算成新增洪水——水面后向散射不是常数，风场（水面粗糙度）、
+//   轨道/入射角变化、基线土壤湿度漂移都能让同一个水面再掉几个 dB，差值条件照样成立。
+//   脚本里唯一与"已有水"有关的条件是 JRC 永久水体（occurrence > 90%），季节性水体、
+//   小水面它一概挡不住。
+//   注意：这 4 个值是 IW GRD 的**参考初值**，未按本区标定；标定它们正是本判读台这一轮的任务。
+var VV_PRE_NONWATER_TH = -15;  // 事件前 VV > -15 dB 才视为非水
+var VH_PRE_NONWATER_TH = -20;  // 事件前 VH > -20 dB 才视为非水
+var VV_POST_WATER_TH = -16;    // 事件后 VV < -16 dB 才视为水体
+var VH_POST_WATER_TH = -22;    // 事件后 VH < -22 dB 才视为水体
 var MNDWI_THRESHOLD = 0.2;     // 光学水体阈值
 var SLOPE_LIMIT = 5;           // 低坡度阈值（度）
 var STABLE_TOLERANCE = 1.5;    // SAR 稳定区容差（dB）
@@ -33,7 +52,7 @@ var S2_MAX_CLOUD = 90;         // S2 整景云量上限（%）
 
 // ---- 抽样参数 ----
 var SAMPLE_SCALE = 100;         // 抽样与统计尺度（m）
-var POINTS_PER_CLASS = 300;   // 每类最多抽样点数（实际取 min(该值, 该类像元数)）
+var POINTS_PER_CLASS = 200;   // 每类最多抽样点数（实际取 min(该值, 该类像元数)）
 var SAMPLE_SEED = 20260927;          // 抽样随机种子
 
 // ---- 正负样本口径 ----
@@ -450,12 +469,47 @@ var EVENTS = [
 //   否则点一下 Run 只会出 5 行、看起来像"数据丢了"。要单独复核某一两场时，
 //   临时把下面这行换成数组即可（改完记得改回来）：
 //     var RUN_EVENT_NAMES = ['Wuhan_2025_0522'];
-// 【伪标签精度验证·第1轮】只跑三场代表性事件：2020大面积 / 2021多云 / 2023可疑低面积
+// 【伪标签精度验证·第2轮（改动34 阈值标定）】只跑第 1 轮的三场代表性事件：
+//   2020_0705（大面积，且第一轮已判读 401 点，可直接复用）、
+//   2021_0823（多云、低面积）、2023_0618（雨量大但面积很小，最可疑）。
+//   三场判读点合计上限 3 × 140 = 420 个。
+//   在这三场里 split 会自动分成：tune = 2020_0705 / 2023_0618，valid = 2021_0823
+//   （依据下面的 VALIDATION_EVENT_NAMES）。验证集只有一场，代表性有限——结论先当"方向性判断"，
+//   要扩到全量时把这一行改回 `var RUN_EVENT_NAMES = null;`，或点名更多事件
+//   （例如 `var RUN_EVENT_NAMES = tuneEventNames();` 只跑调参集）。
 var RUN_EVENT_NAMES = [
   'Wuhan_2020_0705',
   'Wuhan_2021_0823',
   'Wuhan_2023_0618'
 ];
+
+// 【改动34】按事件留出：独立验证集（**不参与调阈值**）
+//   其余事件（split = 'tune'）用于标定 4 个新阈值；验证集只用于最终的独立精度评价，
+//   两组事件不重叠，避免"用同一批点既调参又评价"。
+//   选取原则：跨年份、跨 S2 覆盖档（OK / LOW_S2_COVER）、跨"面积—雨量"档：
+//     2016_0630 历史极值（大面积）、2017_0824 强制 L1C（唯一的非 L2A 源）、
+//     2021_0823 多云低面积、2023_0719 A→B 降级、2025_0607 最新年度。
+//   注意：`Wuhan_2020_0705` **不**放进验证集——第一轮已判读的 401 点
+//     （csvdata/validation_points/Wuhan_validation_reference_20200705.csv）会用于调参，
+//     同一场不能再当独立验证。
+//   本次只跑三场（见上面的 RUN_EVENT_NAMES），因此实际参与判读的 valid 只有
+//     `Wuhan_2021_0823`；名单里其余事件在将来扩跑时自动生效，不需要改这里。
+var VALIDATION_EVENT_NAMES = [
+  'Wuhan_2016_0630',
+  'Wuhan_2017_0824',
+  'Wuhan_2021_0823',
+  'Wuhan_2023_0719',
+  'Wuhan_2025_0607'
+];
+function eventSplit(name) {
+  return VALIDATION_EVENT_NAMES.indexOf(name) >= 0 ? 'valid' : 'tune';
+}
+function tuneEventNames() {
+  return EVENTS.filter(function (e) {
+    return !e.isControl && eventSplit(e.name) === 'tune';
+  }).map(function (e) { return e.name; });
+}
+
 // var RUN_EVENT_NAMES = [           // ← 【改动24】的 5 事件对照名单（已跑完，留档备查）
 //   'Wuhan_2021_0823',   // 低面积：143.6 mm / 面积偏小
 //   'Wuhan_2022_0627',   // 低面积
@@ -864,8 +918,16 @@ function buildEvent(ev) {
     .divide(vv_pre.expression('pow(10, b(0) / 10)'))
     .rename('VV_ratio');
 
+  // 【改动34】新增水体判定同时要求：事件前非水 + 事件后为水 + 相对下降超阈值。
+  //   前两项（vv_diff / vh_diff）是原规则，后四项是新增的"绝对量级"维度：
+  //     事件前要够亮（> -15 / > -20）才承认是陆面，事件后要够暗（< -16 / < -22）才承认是水面。
+  //   这样可排除"事件前已经是水体、仅因风场/粗糙度变化使 vv_diff 继续变负"的像元。
   var sarFlood = vv_diff.lt(VV_THRESHOLD)
     .and(vh_diff.lt(VH_THRESHOLD))
+    .and(vv_pre.gt(VV_PRE_NONWATER_TH))
+    .and(vh_pre.gt(VH_PRE_NONWATER_TH))
+    .and(vv_post_c.lt(VV_POST_WATER_TH))
+    .and(vh_post_c.lt(VH_POST_WATER_TH))
     .rename('SAR_Flood');
 
   // 洪水候选同样用 s1Valid 约束，只有前后都有观测的像元才可能被判为洪水
@@ -1092,6 +1154,66 @@ function buildEvent(ev) {
     .rename('conf_nonflood');
 
   // ----------------------------------------------------------
+  // 4.10b【改动34】判读分层带 + 旧规则标签（回答"新阈值到底删掉了什么"）
+  //   分层值：
+  //     0 = 非洪涝（新规则 label = 0，含 High / Medium Non-Flood）
+  //     1 = High Flood（新规则判洪 + 光学背书，conf_flood = 2）
+  //     2 = Medium Flood（新规则判洪 + 窗口内无 S2，conf_flood = 1）
+  //     3 = 版本差异层：约束前判洪、约束后不判洪，原因 = 事件前已经是水（未过 pre 条件）
+  //     4 = 版本差异层：约束前判洪、约束后不判洪，原因 = 事件前非水、但事件后不够暗（未过 post 条件）
+  //   差异层按**最终标签**定义（旧规则 label = 1 且新规则 label ≠ 1），也就是 Summary10 比
+  //   Summary11 多出来（随后被删掉）的那些像元；候选层面被删、但本来就不进标签的像元
+  //   （永久水体、坡度不合格、光学/时相不满足）不在其中，也不需要判读。
+  //   第 3、4 层正是本次阈值评价的关键：
+  //     第 3 层若多数被判为"事件前确实已有水体" → 排除旧水是对的，pre 阈值可以保留甚至收紧；
+  //     第 4 层若大量被判为真洪水        → post 阈值（-16 / -22）偏严，砍掉了真实淹没。
+  //   （新规则 ⊂ 旧规则：新增的 4 个条件只会删像元、不会新增像元，所以"新判洪但旧不判"不存在。）
+  // ----------------------------------------------------------
+  var oldSarFlood01 = vv_diff.lt(VV_THRESHOLD).and(vh_diff.lt(VH_THRESHOLD))
+    .unmask(0).and(s1Valid);
+  // 旧规则的洪涝标签（约束前的 floodUsed，其余条件与新版完全相同；同样尊重
+  //   USE_MEDIUM_AS_FLOOD 开关，否则把开关改成 false 时 old_label 会算错）
+  var oldHighFlood01 = oldSarFlood01.and(opticalFlood)
+    .and(nonPermanentWater).and(lowSlope).unmask(0);
+  var oldMediumFlood01 = oldSarFlood01.and(s2Valid.not())
+    .and(nonPermanentWater).and(lowSlope).unmask(0);
+  var oldFloodUsed = USE_MEDIUM_AS_FLOOD
+    ? oldHighFlood01.or(oldMediumFlood01) : oldHighFlood01;
+  var droppedByNewThr = oldFloodUsed.and(floodUsed.not());
+  var preLooksWater = vv_pre.lte(VV_PRE_NONWATER_TH).unmask(0)
+    .or(vh_pre.lte(VH_PRE_NONWATER_TH).unmask(0));
+  var cutPreWater = droppedByNewThr.and(preLooksWater);
+  var cutPostWeak = droppedByNewThr.and(preLooksWater.not());
+
+  // 可抽样区 = 新规则有标签的像元 ∪ 被删掉的像元
+  //   （其余像元是 Unknown：前后缺 SAR 观测、永久水体、坡度不合格等，不参与判读）
+  var samplable = knownArea.or(droppedByNewThr);
+  var stratum = ee.Image(0)
+    .where(cutPreWater, 3)
+    .where(cutPostWeak, 4)
+    .where(highFlood01, 1)
+    .where(mediumFlood01, 2)
+    .updateMask(samplable)
+    .rename('stratum');
+  // 新标签（1 = 洪涝 / 0 = 非洪涝 / -1 = 掩膜未定）
+  var newLabelBand = label.unmask(-1).rename('new_label');
+  // 旧标签：非旧洪涝像元在新旧两版里的"非洪涝判定"条件完全相同（改动34 没动 sarStable /
+  //   s2Valid / opticalNonWater / nonPermanentWater / lowSlope），所以
+  //   旧标签 = 新标签，仅在"旧规则判洪"处强制为 1。这样导出的 CSV 能直接做前后 2×2 对比。
+  var oldLabelBand = newLabelBand.where(oldFloodUsed, 1).rename('old_label');
+  var oldSarFloodBand = oldSarFlood01.toInt().rename('old_sar_flood');
+
+  // 各层像元数（在 SAMPLE_SCALE 网格上数像元）：判读抽样按"每层实际像元数"取 min，
+  //   像元少的层不会被硬抽。频率直方图只发一次请求，正式判读时在 console 打印备查。
+  var stratumHist = stratum.reduceRegion({
+    reducer: ee.Reducer.frequencyHistogram(), tileScale: 8, geometry: geom,
+    scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
+  });
+  print('【改动34】' + ev.name + ' 判读分层像元数'
+    + '（0=非洪涝 / 1=High洪涝 / 2=Medium洪涝 / 3=版本差异·前已是水 / 4=版本差异·后不够暗）:',
+    stratumHist);
+
+  // ----------------------------------------------------------
   // 4.11 特征栈（波段名/顺序与原 temp.js 完全一致，下游脚本无需改）
   // ----------------------------------------------------------
   var featureStack = ee.Image.cat([
@@ -1112,6 +1234,21 @@ function buildEvent(ev) {
     .addBands(label)
     .addBands(confFlood)
     .addBands(confNonFlood);
+
+  // 【改动34】判读用影像 = 训练样本影像 + 分层带 + 新旧标签 + 事件前/后原始后向散射。
+  //   VV_pre / VH_pre / VV_post_c / VH_post_c 正是 4 个新阈值的直接输入，
+  //   判读"事件前是不是已经是水、事件后到底有没有到水体量级"必须看得到，
+  //   否则只凭 VV_diff / VH_diff 无法区分"旧水"和"真实新增洪水"。
+  //   注意：这些带只加在判读影像上，不进入 featureStack（训练样本列保持原样）。
+  var reviewImage = sampleImage
+    .addBands(stratum)
+    .addBands(newLabelBand)
+    .addBands(oldLabelBand)
+    .addBands(oldSarFloodBand)
+    .addBands(vv_pre.rename('VV_pre'))
+    .addBands(vh_pre.rename('VH_pre'))
+    .addBands(vv_post_c.rename('VV_post_c'))
+    .addBands(vh_post_c.rename('VH_post_c'));
 
   // ----------------------------------------------------------
   // 4.12【改动9】每时段像元统计（一次 reduceRegion 取回全部计数）
@@ -1338,6 +1475,11 @@ function buildEvent(ev) {
     skipped: false,
     summary: summary,
     samples: samples,
+    // 【改动34】判读台专用：分层抽样影像、分层带、分层像元数、本事件 ROI
+    reviewImage: reviewImage,
+    stratum: stratum,
+    stratumHist: stratumHist,
+    roi: roi,
     featureStack: featureStack,
     label: label,
     highConfidenceFlood: highConfidenceFlood,
@@ -1512,10 +1654,11 @@ if (EXPORT_PER_EVENT) {
 //
 // 为什么这么接：
 //   1) 点位来源：伪标签生成脚本导出的点 CSV 只有属性、没有几何（selectors 里没写
-//      '.geo'），拿回来无法落图；所以判读点位直接用内存里的 samples（geometries: true），
-//      它们由同一套 SAMPLE_SEED / SAMPLE_SCALE / POINTS_PER_CLASS 生成；第二部分
-//      再按类别各截取前 REVIEW_POINTS_PER_CLASS 个用于人工判读（默认每场最多
-//      200 Flood + 200 Non-Flood，样本不足时取实际数量）。
+//      '.geo'），拿回来无法落图；所以判读点位直接在内存里按层抽（geometries: true），
+//      用同一套 SAMPLE_SEED / SAMPLE_SCALE。
+//      【改动34】抽法从"按 label 抽正负两类"改成"按 5 层分层抽"（见 7.1）：
+//      非洪涝 / High Flood / Medium Flood / 版本差异·前已是水 / 版本差异·后不够暗，
+//      每层上限见 REVIEW_POINTS_PER_STRATUM（像元不足时取实际数量）。
 //   2) 开卷偏差：文档第十六节要求正式判读**不显示伪标签**。这里默认不加载 label /
 //      High Flood / Medium Flood 图层，验证点统一成一种颜色，也不显示
 //      conf_flood / conf_nonflood（它们是"答案"的一部分）；自查时才用开关打开。
@@ -1535,13 +1678,52 @@ var REVIEW_CURRENT_COLOR = 'red';    // 当前判读点高亮色
 var REVIEW_JUMP_ZOOM = 15;           // 跳到某点时的缩放级别
 var REVIEW_AUTO_NEXT = true;         // 记录后自动跳到下一点
 var EXPORT_BLANK_SHEET = false;      // true = 另导一份"线下判读底表"（reference / confidence 留空）
-var REVIEW_POINTS_PER_CLASS = 200;   // 第二部分每类最多判读点数
+
+// ---- 【改动34】判读分层与每层点数 ----
+//   值 = buildEvent 里 stratum 带的像元值；五层含义见 4.10b。
+//   3、4 两层是"约束前判洪、约束后被删"的差异层，是判断阈值松紧的关键，点数给得多一些。
+//   0/1/2 三层用于算 Precision / Recall，测洪涝类的全局水平即可，不必多抽。
+//   总点数 ≈ 事件数 × Σ(下面五个数)，全量 18 场就是 18 × 140 = 最多 2520 点；
+//   单次会话判不完就按事件分批跑（用 RUN_EVENT_NAMES 点名几场）。
+var REVIEW_STRATA = [
+  {value: 0, key: 'nonflood',     name: '非洪涝（新规则未判洪）'},
+  {value: 1, key: 'high_flood',   name: 'High Flood（判洪 + 光学背书）'},
+  {value: 2, key: 'medium_flood', name: 'Medium Flood（判洪 + 无 S2）'},
+  {value: 3, key: 'cut_prewater', name: '版本差异·事件前已是水（被删）'},
+  {value: 4, key: 'cut_postweak', name: '版本差异·前非水但后不够暗（被删）'}
+];
+var REVIEW_POINTS_PER_STRATUM = {
+  nonflood: 20,
+  high_flood: 20,
+  medium_flood: 20,
+  cut_prewater: 40,
+  cut_postweak: 40
+};
+function stratumName(v) {
+  var x = Number(v);
+  for (var i = 0; i < REVIEW_STRATA.length; i++) {
+    if (REVIEW_STRATA[i].value === x) { return REVIEW_STRATA[i].key; }
+  }
+  return 'unknown(' + v + ')';
+}
+// 服务端用的同一张表（按 stratum 值索引，顺序必须与 REVIEW_STRATA 一致）
+var STRATUM_NAMES = ee.List(REVIEW_STRATA.map(function (s) { return s.key; }));
 
 // 判读结果导出的列 = 判读底表列 + reference / confidence
+//   split        = tune（调参集）/ valid（独立验证集），按事件留出，见第 2 节
+//   stratum      = 抽样分层（0/1/2/3/4，分析时用它分组）
+//   stratum_name = 分层名（服务端按 stratum 值映射，便于直接读表）
+//   new_label    = 【改动34】新规则标签（1 = 洪涝 / 0 = 非洪涝 / -1 = 掩膜未定）
+//   old_label    = 旧规则标签（同口径），new_label 与 old_label 的差异就是这次加约束的净效应
+//   old_sar_flood= 旧 SAR 候选（只看 vv_diff / vh_diff 两项，1/0），用于区分"候选层面被删"与"标签层面被删"
+//   pseudo_label = 等价于 new_label，保留旧列名，供 validation_accuracy_report.py 直接读
+//   VV_pre / VH_pre / VV_post_c / VH_post_c = 4 个新阈值的直接输入，便于事后复核与标定
 var REVIEW_SELECTORS = [
-  'point_id', 'event_id', 'pseudo_label',
+  'point_id', 'event_id', 'split', 'stratum', 'stratum_name',
+  'pseudo_label', 'new_label', 'old_label', 'old_sar_flood',
   'longitude', 'latitude',
   'conf_flood', 'conf_nonflood',
+  'VV_pre', 'VH_pre', 'VV_post_c', 'VH_post_c',
   'VV', 'VH', 'VV_diff', 'VH_diff', 'VV_ratio',
   'NDVI', 'MNDWI', 'DEM', 'slope', 'S2_Valid'
 ];
@@ -1551,22 +1733,57 @@ var REVIEW_JRC = ee.Image('JRC/GSW1_4/GlobalSurfaceWater')
   .select('occurrence').clip(DEFAULT_ROI);
 
 // ---------------------------------------------------------------------------
-// 7.1 判读点表：把 samples 补成文档第十二节要求的字段
-//   实际导出的样本属性里，伪标签列名是 label，且没有 point_id / 经纬度，
-//   这里统一补成 pseudo_label / point_id / longitude / latitude。
+// 7.1【改动34】判读点表：按"五层"分层抽样，不再是"按 label 抽正负两类"
+//   旧写法只从训练样本里取 label = 0 / 1，**永远抽不到"版本差异层"**（约束前判洪、
+//   约束后被删的像元）——而那一层恰恰是判断阈值松紧的关键，Summary11 面积 -65.6% 是否
+//   合理就靠它。这里直接从 r.reviewImage（含 stratum 带）上抽，每层点数取
+//     min(REVIEW_POINTS_PER_STRATUM[key], 该层实际像元数)
+//   像元少的层不会被硬抽；某层像元数为 0 时该层不出点。
+//   点自带 point_id / split / stratum / pseudo_label(= new_label) / old_label / 经纬度。
 // ---------------------------------------------------------------------------
+function histCount(hist, v) {
+  // frequencyHistogram 的键是字符串；整数带一般是 '3'，这里兼容 '3.0'
+  var a = hist[String(v)];
+  if (a === undefined) { a = hist[String(v) + '.0']; }
+  return a || 0;
+}
+
 function buildReviewPoints(r) {
-  var reviewSamples = r.samples
-    .filter(ee.Filter.eq('label', 0))
-    .limit(REVIEW_POINTS_PER_CLASS)
-    .merge(r.samples
-      .filter(ee.Filter.eq('label', 1))
-      .limit(REVIEW_POINTS_PER_CLASS));
-  return reviewSamples.map(function (f) {
+  var hist = (r.stratumHist.getInfo() || {}).stratum || {};
+  var classValues = [];
+  var classPoints = [];
+  var total = 0;
+  REVIEW_STRATA.forEach(function (s) {
+    var cap = REVIEW_POINTS_PER_STRATUM[s.key] || 0;
+    var n = Math.round(Math.min(cap, histCount(hist, s.value)));
+    if (n > 0) {
+      classValues.push(s.value);
+      classPoints.push(n);
+      total += n;
+    }
+  });
+  if (total === 0) { return ee.FeatureCollection([]); }
+
+  var fc = r.reviewImage.stratifiedSample({
+    numPoints: total,
+    classBand: 'stratum',
+    region: r.roi,
+    scale: SAMPLE_SCALE,
+    classValues: classValues,
+    classPoints: classPoints,
+    geometries: true,
+    seed: SAMPLE_SEED,
+    tileScale: 4
+  });
+  return fc.map(function (f) {
     var c = f.geometry().coordinates();
     return f.set({
-      point_id: ee.String(f.get('event_id')).cat('_').cat(ee.String(f.get('system:index'))),
-      pseudo_label: f.get('label'),
+      point_id: ee.String(r.name).cat('_').cat(ee.String(f.get('system:index'))),
+      event_id: r.name,
+      // 按事件留出：调参集 / 独立验证集（见第 2 节 VALIDATION_EVENT_NAMES）
+      split: eventSplit(r.name),
+      stratum_name: STRATUM_NAMES.get(ee.Number(f.get('stratum')).toInt()),
+      pseudo_label: f.get('new_label'), // 新规则标签：1 / 0 / -1（-1 = 掩膜，未定）
       longitude: c.get(0),
       latitude: c.get(1)
     });
@@ -1589,8 +1806,13 @@ results.forEach(function (r) {
   REVIEW_COUNTS.push(n);
 });
 
-print('判读事件与候选点数（每场最多 200 Flood + 200 Non-Flood = 400）：',
+print('判读事件与候选点数（每场最多 5 层 × 每层上限，见 REVIEW_POINTS_PER_STRATUM）：',
   ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_COUNTS));
+print('【改动34】按事件留出：独立验证集 valid = ' + REVIEW_EVENTS.filter(function (nm) {
+  return eventSplit(nm) === 'valid';
+}).join(', ') + '；其余为调参集 tune（' + REVIEW_EVENTS.filter(function (nm) {
+  return eventSplit(nm) === 'tune';
+}).join(', ') + '）');
 
 var allReviewPoints = ee.FeatureCollection([]);
 REVIEW_POINTS.forEach(function (fc) { allReviewPoints = allReviewPoints.merge(fc); });
@@ -1680,6 +1902,13 @@ function renderEventLayers() {
       {min: 0, max: 10}, 'Slope 坡度(度)', false));
   }
 
+  // 【改动34】自查模式（REVIEW_HIDE_PSEUDO = false）才显示分层图层，盲判时不给提示
+  if (!REVIEW_HIDE_PSEUDO) {
+    evidenceLayers.push(addLayerKeep(r.stratum,
+      {min: 0, max: 4, palette: ['d9d9d9', '2166ac', '92c5de', 'f4a582', 'b2182b']},
+      r.name + ' 判读分层（0非洪涝/1High/2Medium/3差异·前已是水/4差异·后不够暗）', false));
+  }
+
   pointLayers.push(addLayerKeep(pointsOf(reviewState.evIdx), {color: REVIEW_POINT_COLOR},
     '验证点 ' + nameOf(reviewState.evIdx) + '（' + countOf(reviewState.evIdx)
     + ' 个，颜色不含类别信息）'));
@@ -1742,6 +1971,13 @@ function updateCurrent(zoom) {
     + fmtNum(p.longitude, 5) + ', ' + fmtNum(p.latitude, 5));
 
   var lines = [
+    // 【改动34】抽样分层（导航用；真正的伪标签在本行之后的"自查模式"里才显示）
+    '抽样层: ' + (stratumName(p.stratum) || 'NA') + '（stratum=' + p.stratum + '）',
+    // 4 个新阈值的直接输入：事件前是否已是水、事件后是否到水体量级
+    'S1 事件前 VV_pre: ' + fmtNum(p.VV_pre) + ' dB   VH_pre: ' + fmtNum(p.VH_pre) + ' dB'
+      + '　（非水要求 > ' + VV_PRE_NONWATER_TH + ' / ' + VH_PRE_NONWATER_TH + '）',
+    'S1 事件后 VV_post_c: ' + fmtNum(p.VV_post_c) + ' dB   VH_post_c: ' + fmtNum(p.VH_post_c)
+      + ' dB　（水体要求 < ' + VV_POST_WATER_TH + ' / ' + VH_POST_WATER_TH + '）',
     'S1 综合 VV(原始): ' + fmtNum(p.VV) + ' dB     VH: ' + fmtNum(p.VH) + ' dB',
     'S1 变化量 VV_diff: ' + fmtNum(p.VV_diff) + ' dB   VH_diff: ' + fmtNum(p.VH_diff)
       + ' dB   VV_ratio: ' + fmtNum(p.VV_ratio, 3),
@@ -1750,7 +1986,9 @@ function updateCurrent(zoom) {
     'DEM: ' + fmtNum(p.DEM, 1) + ' m   坡度: ' + fmtNum(p.slope, 2) + ' 度'
   ];
   if (!REVIEW_HIDE_PSEUDO) {
-    lines.push('（自查模式）伪标签: ' + p.pseudo_label
+    lines.push('（自查模式）事件划分: ' + p.split
+      + '　新规则标签 new_label: ' + p.new_label + '　旧规则标签 old_label: ' + p.old_label
+      + '　旧 SAR 候选 old_sar_flood: ' + p.old_sar_flood
       + '　conf_flood: ' + p.conf_flood + '　conf_nonflood: ' + p.conf_nonflood);
   }
   evidLabel.setValue(lines.join('\n'));
@@ -1899,9 +2137,14 @@ panel.add(statLabel);
 panel.add(lastLabel);
 panel.add(ui.Label(
   '用法：选事件 → 逐点看 S1 / S2 / DEM / JRC 证据 → 点 Flood / Non-Flood / Uncertain '
-  + '记录并自动跳下一点。结果存在内存里，判读完务必点"导出判读结果 CSV"（再到 Tasks '
-  + '面板点 RUN）。重跑脚本会清空全部记录，请一次会话内判完。',
-  {fontSize: '11px', color: 'gray', margin: '8px 0 0 0'}));
+  + '记录并自动跳下一点。\n'
+  + '【改动34】每场点按 5 层抽样：非洪涝 / High Flood / Medium Flood / '
+  + '版本差异·事件前已是水（被删）/ 版本差异·后不够暗（被删）；点名顺序即按此层序，'
+  + '后两层是判断新阈值松紧的关键。面板里的 VV_pre / VH_pre 就是"事件前是否已是水"的依据。\n'
+  + '事件按 tune（调参集）/ valid（独立验证集）留出，导出的 split 列会带上。\n'
+  + '结果存在内存里，判读完务必点"导出判读结果 CSV"（再到 Tasks 面板点 RUN）。'
+  + '重跑脚本会清空全部记录，请一次会话内判完（判不完就按事件分批跑）。',
+  {fontSize: '11px', color: 'gray', margin: '8px 0 0 0', whiteSpace: 'pre'}));
 Map.add(panel);
 
 // 启动：渲染首个事件并定位到第一个点

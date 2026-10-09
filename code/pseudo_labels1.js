@@ -83,6 +83,13 @@ var NO_OPTICAL_COVER = 0.05;     // 低于此比例 → NO_OPTICAL（基本没�
 //  mask() 看不见它；不掩掉的话 vv_diff 会出现 -30000 dB 级别的假变化。
 var S1_FILL_DB = -50;
 
+// ---- Sentinel-1 IW GRD 新增初值约束（排除事件前已有水体）----
+// 说明：以下均为参考初值，需按研究区轨道/入射角/地物类型用人工样本重新标定。
+var VV_PRE_NONWATER_TH = -15;  // 事件前 VV > -15 dB 才视为非水
+var VH_PRE_NONWATER_TH = -20;  // 事件前 VH > -20 dB 才视为非水
+var VV_POST_WATER_TH = -16;    // 事件后 VV < -16 dB 才视为水体
+var VH_POST_WATER_TH = -22;    // 事件后 VH < -22 dB 才视为水体
+
 // ---- 去偏模式（背景参考化）----
 //  Sentinel-1 前后时相之间存在与洪水无关的系统性后向散射偏移（土壤湿度/物候/轨道几何）。
 //  实测同一事件内 orbit 40 与 orbit 113 的背景偏移可差 ~0.9 dB，只扣一个全局数会在两条
@@ -845,8 +852,14 @@ function buildEvent(ev) {
     .divide(vv_pre.expression('pow(10, b(0) / 10)'))
     .rename('VV_ratio');
 
+  // 新增水体判定同时要求：事件前非水 + 事件后为水 + 相对下降超阈值。
+  // 这样可排除“事件前已经是水体、仅因风场/粗糙度变化使 vv_diff 继续变负”的像元。
   var sarFlood = vv_diff.lt(VV_THRESHOLD)
     .and(vh_diff.lt(VH_THRESHOLD))
+    .and(vv_pre.gt(VV_PRE_NONWATER_TH))
+    .and(vh_pre.gt(VH_PRE_NONWATER_TH))
+    .and(vv_post_c.lt(VV_POST_WATER_TH))
+    .and(vh_post_c.lt(VH_POST_WATER_TH))
     .rename('SAR_Flood');
 
   // 洪水候选同样用 s1Valid 约束，只有前后都有观测的像元才可能被判为洪水
