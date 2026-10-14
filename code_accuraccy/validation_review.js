@@ -13,6 +13,8 @@
 //   2)【改动37】已移除训练/验证样本点链（样本抽样 + EXPORT_ALL / EXPORT_PER_EVENT 两个导出）；
 //      【改动38】又移除了汇总表链（countImage/counts、4.14 汇总行、4.15 质控、summaryFC 与
 //      EXPORT_SUMMARY），本文件此后**没有任何 Export**，唯一出口是判读结果 CSV；
+//      【改动39】再移除 4.5b 的 S2 后窗越界尾段诊断（S2_TAIL_DIAG）——它只服务
+//      当年给三场定 s2PostEnd，窗定案后恒不命中；越界报警仍由末尾启动自检承担；
 //   3) 去掉旧的"显示"块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 //   4) buildEvent 返回值里多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；
 //   5)【改动34】同步 4 个新阈值 + 新增判读分层带（stratum）/ 新旧标签（new_label、
@@ -136,13 +138,10 @@ var DEBIAS_MODE = 'perImage';
 //  注意：打开后每个事件会多跑十余次 reduceRegion 并往 Map 上叠图层，全量跑务必保持 false。
 var DIAG = false;
 
-// ---- 【改动31】S2 后窗"越界尾段"诊断开关 ----
-//   只对"本场 S2 后窗伸进后面某场暴雨"的事件生效：`2025_0522` 已按诊断截断
-//   （尾段只贡献 0.6% 的晴空像元，见 `doc/labelConsole2.md`），所以**当前 0 场命中**；
-//   日后只要再出现越界（新的相邻暴雨），它会自动打印，不需要额外操作。
-//   打开后每个命中的事件会多跑 1 次 5 波段 reduceRegion，用来回答"截掉重叠尾段会丢多少晴空观测"。
-//   其余事件不命中、零额外开销，所以正式全量跑也可以保持 true；不想看时置 false。
-var S2_TAIL_DIAG = true;
+// ---- 【改动39】原【改动31】S2 后窗"越界尾段"诊断开关（S2_TAIL_DIAG）已删除 ----
+//   该诊断与 4.5b 整块移除：三场靠它定案的 s2PostEnd（2020_0628 / 2024_0621_0628 /
+//   2025_0522）都已写进事件表，当前窗口下越界命中为 0，分支不会执行。
+//   越界报警改由文件末尾【改动29】的 reportS2WindowOverlaps() 承担（纯 JS、零算力）。
 
 // ---- 【改动32】S2 云掩膜口径（回答"标签里的水有多少是残云撑起来的"）----
 //   'QA60'         ：原口径 —— QA60 bit10（厚云）+ bit11（卷云）都为 0 才算晴空；
@@ -389,7 +388,7 @@ var EVENTS = [
     //   没有提供新的晴空观测，可以安全截掉，不会重演 2024_0621 的"截完就 NO_OPTICAL"。
     //   代价与连带检查：06-07 的 4 景退出本场标签；它们也不属于 `Wuhan_2025_0607` 的后窗
     //   （那场从事件结束 06-09 起算 → 06-08 16:00 UTC 起），所以不会让另一场丢观测。
-    //   截断后【改动29】自检不再命中本场，【改动31】诊断也不再触发（无重叠可诊断）。
+    //   截断后【改动29】自检不再命中本场，尾段诊断（【改动39】已移除）也不再触发（无重叠可诊断）。
     s2PostEnd: '2025-06-07 00:00'
   },
   {
@@ -413,7 +412,7 @@ var EVENTS = [
   //   注意：
   //     ① 默认全量**不跑**（EVENTS_TO_RUN 会过滤 isControl），只在 RUN_EVENT_NAMES 里点名才跑：
   //          RUN_EVENT_NAMES = ['Wuhan_2022_0601_CTRL', 'Wuhan_2023_0525_CTRL']
-  //     ② 越界自检（【改动29】）与尾段诊断（【改动31】）都会跳过对照事件；
+  //     ② 越界自检（【改动29】）会跳过对照事件（尾段诊断【改动39】已移除）；
   //     ③ 跑之前请用雨量记录确认这两个窗口确实没有暴雨（本事件表里它们附近没有暴雨时段）；
   //     ④ 对照事件不进任何训练/验证划分，只作为"标签是不是季节性明水"的证据。
   {
@@ -651,7 +650,8 @@ function buildEvent(ev) {
   }
 
   // 【改动31】逐景的 S2 有效性指示带（云掩膜后该景是否仍有观测，0/1）。
-  //   主流程（s2IdxCol）与"越界尾段诊断"共用同一写法，避免两处口径漂移。
+  //   主流程（s2IdxCol）用它；原先 4.5b 的"越界尾段诊断"也复用同一写法，
+  //   那段已在【改动39】移除。
   function s2ValidBand(im) {
     return im.select('B3').mask().unmask(0).gt(0).rename('S2_Valid');
   }
@@ -913,62 +913,15 @@ function buildEvent(ev) {
   var mndwi = s2Idx.select('MNDWI').rename('MNDWI');
 
   // ----------------------------------------------------------
-  // 4.5b【改动31】S2 后窗"越界尾段"的晴空贡献诊断（只对与后一场暴雨重叠的事件跑）
-  //   问题：2025_0522 的 S2 后窗（止于 2025-06-09）伸进 2025_0607 的暴雨（起于 2025-06-07）
-  //     2.7 天。逐景 max 会把后一场的水并进前一场标签，所以"最好截掉"；
-  //     但若尾段恰好是窗口里唯一的晴空观测，截完就会重演 2024_0621 的 NO_OPTICAL
-  //     （S2 覆盖 0.3%、High Flood = 0）。
-  //   判据：不是 s2_count（那只是集合大小，L2A/L1C 各算一遍），而是
-  //     "整窗有效像元里有多少只在尾段有效" = n_tail_excl（截掉就丢的量）。
-  //   判读（与 s2_valid_px 同口径：sum 面积加权、scale = SAMPLE_SCALE）：
-  //     （s2_valid_px 这个汇总列已在【改动38】随汇总表移除，诊断仍按同一口径算量）
-  //     n_tail_excl / n_window 很小 → 尾段没带来新的晴空观测，可以安全截到后一场起点之前；
-  //     明显偏大                  → 不要截，按【改动28】把两场合并为一场。
-  //   参考阈值 5%：低于它，截断造成的光学证据损失可忽略。
+  // 4.5b【改动39】原 4.5b 尾段诊断（【改动31】，开关 S2_TAIL_DIAG）已整块移除。
+  //   它只回答"把重叠尾段截掉会丢多少晴空观测"，供当时给 2020_0628 /
+  //   2024_0621_0628 / 2025_0522 定 s2PostEnd 用；三场都已定案，事件表按当前
+  //   窗口实测越界命中为 0，该分支根本不会执行（其 reduceRegion 也确实包在
+  //   `if (tailHits.length > 0)` 之内），留着只是死码。
+  //   护栏保留：文件末尾的【改动29】启动自检 reportS2WindowOverlaps() 仍然每
+  //   次加载跑一遍（纯 JS、不连 GEE、零算力），日后新增事件或改窗时照样报警。
+  //   若某天真要重新量化"尾段丢多少"，按 doc/labelConsole2.md 的口径单独跑即可。
   // ----------------------------------------------------------
-  if (S2_TAIL_DIAG) {
-    var tailHits = s2WindowOverlapHits(ev);
-    if (tailHits.length > 0) {
-      var tailHit = tailHits[0];                       // EVENTS 按时间排序 → 最近的一场
-      var tailCutJs = new Date(tailHit.startMs);       // 后一场暴雨起点（UTC）
-      var tailHeadCol = s2Col.filterDate(w.s2PostStart, ee.Date(tailCutJs));
-      var tailCol = s2Col.filterDate(ee.Date(tailCutJs), w.s2PostEnd);
-      var tailHeadValid = tailHeadCol.map(s2ValidBand).select('S2_Valid')
-        .max().unmask(0).gt(0);
-      var tailValid = tailCol.map(s2ValidBand).select('S2_Valid')
-        .max().unmask(0).gt(0);
-      var tailDiag = ee.Image.cat([
-        s2Valid.toInt().rename('n_window'),                                 // 整窗并集
-        tailHeadValid.toInt().rename('n_head'),                             // 截断后剩下的并集
-        tailValid.toInt().rename('n_tail'),                                 // 尾段并集
-        tailValid.and(tailHeadValid.not()).toInt().rename('n_tail_excl'),   // 只在尾段有效（截掉就丢）
-        tailHeadValid.and(tailValid.not()).toInt().rename('n_head_excl')    // 只在截断段有效
-      ]).reduceRegion({
-        reducer: ee.Reducer.sum(), tileScale: 8, geometry: geom,
-        scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
-      }).getInfo() || {};
-      var nWindowValid = tailDiag.n_window || 0;
-      var nHeadValid = tailDiag.n_head || 0;
-      var nTailExcl = tailDiag.n_tail_excl || 0;
-      var tailExclShare = (nWindowValid > 0) ? (nTailExcl / nWindowValid) : 0;
-      print('【改动31】' + ev.name + ' 的 S2 后窗越界尾段诊断（与 ' + tailHit.name
-        + ' 重叠 ' + tailHit.overlapDays.toFixed(1) + ' 天；尾段起点 = '
-        + tailHit.startStr + ' 北京时 / ' + isoDate(tailCutJs) + ' UTC）：');
-      print('   整窗 ' + w.s2PostStartStr + ' ~ ' + w.s2PostEndStr
-        + ' 有效像元 = ' + nWindowValid
-        + ' | 截到后一场起点之前 = ' + nHeadValid
-        + ' | 只在尾段有效（截掉就丢）= ' + nTailExcl
-        + '（占整窗 ' + (tailExclShare * 100).toFixed(1) + '%）'
-        + ' | 尾段总有效 = ' + (tailDiag.n_tail || 0));
-      if (tailExclShare > 0.05) {
-        print('   → 结论：不要截。尾段贡献超过 5% 的晴空观测，截掉会重演 2024_0621 的 '
-          + 'NO_OPTICAL；要么保持现状，要么按【改动28】把两场合并为一场。');
-      } else {
-        print('   → 结论：可以截。尾段几乎没带来新的晴空观测，'
-          + '给本场指定 s2PostEnd = （后一场暴雨起点之前）即可消除标签混叠。');
-      }
-    }
-  }
 
   var opticalFlood = mndwi.gt(MNDWI_THRESHOLD).unmask(0).and(s2Valid)
     .rename('Optical_Flood');
@@ -1305,8 +1258,8 @@ function buildEvent(ev) {
 
 // ============================================================================
 // 【改动31】把"本场 S2 后窗是否伸进后面某场暴雨"抽成一个可复用的小函数：
-//   【改动29】的启动自检（下面 reportS2WindowOverlaps）用它打全表；buildEvent 里的
-//   "越界尾段诊断"（4.5b）用同一条判定，避免两处各写一份、日后改一处忘一处。
+//   【改动29】的启动自检（下面 reportS2WindowOverlaps）用它打全表。
+//   （原先 4.5b 的越界尾段诊断也用它做判定，那段已在【改动39】移除。）
 //   返回 [] 或 [{name, startMs, startStr, overlapDays, s2StartMs, s2EndMs}, ...]
 // ============================================================================
 function s2WindowOverlapHits(ev) {

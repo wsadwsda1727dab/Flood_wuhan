@@ -13,6 +13,7 @@
 > 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE = 10`，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。
 > 2026-09-30 增补：**【改动37】`validation_review.js` 定位收敛为「只做目视判读精度评价」**——移除 4.13 那条按 `label` 抽正负两类的训练样本点链（含 `POINTS_PER_CLASS`、`SAMPLE_SELECTORS`、`samples.size()` 阻塞调用、`allSamples` 合并、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出）。判读点链（5 层 / 10 m）不受影响；`summary.sample_count` 固定为 `null`。见第 5 节末。
 > 2026-09-30 增补：**【改动38】`validation_review.js` 再移除逐场汇总表链**——4.12 `countImage`/`counts`、4.14 汇总行（`sensCommon`/`nFloodAt`/`summary` 全字段）、4.15 S2 质控、`summaryBase()` 与 `SUMMARY_SELECTORS`、`summaryFC` 与 `EXPORT_SUMMARY`、`LOW_S2_COVER_MIN`/`MIN_HIGH_FLOOD_SHARE`/`NO_OPTICAL_COVER` 三个阈值一并删除。从此该文件**没有任何 `Export`**，唯一出口是判读结果 CSV；需要汇总表与像元计数请跑主脚本 `code/pseudo_labels1.js`。判读点链不受影响。见第 5 节末。
+> 2026-09-30 增补：**【改动39】`validation_review.js` 移除 S2 后窗越界尾段诊断**（【改动31】的 4.5b 与开关 `S2_TAIL_DIAG`）——三场靠它定 `s2PostEnd` 的事件都已定案，按当前事件表越界命中为 0，其 `reduceRegion` 本就包在 `if (tailHits.length > 0)` 内恒不执行。**越界报警的护栏保留**：末尾【改动29】的 `reportS2WindowOverlaps()` 每次加载跑一遍（纯 JS、零算力）。判读点链不受影响。见第 5 节末。
 
 ---
 
@@ -697,6 +698,60 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 
 ---
 
+### validation_review.js【改动39】：移除 S2 后窗越界尾段诊断（4.5b / `S2_TAIL_DIAG`）
+
+**触发（2026-09-30）**：【改动31】的 4.5b 诊断（`S2_TAIL_DIAG`）只回答一个问题——"把与下一场暴雨重叠的 S2 后窗尾段截掉，会丢多少晴空观测"，用 `n_tail_excl ÷ n_window` 与 5% 阈值作判据，为 `2020_0628` / `2024_0621_0628` / `2025_0522` 三场定 `s2PostEnd`。三场窗定案后：
+
+- 按当前事件表实测（18 场暴雨两两比对 `s2WindowOverlapHits` 的判定逻辑）**越界命中 = 0**；
+- 该诊断的 `reduceRegion` 本来就包在 `if (tailHits.length > 0)` 之内，命中为 0 时**一次 GEE 请求都不发**。
+
+所以这一档省的是代码量与一处开关，**不是算力**；留着只是死码。风险是要保证"以后新增事件或改窗时仍能发现越界"，故只删诊断、**保留启动自检**。
+
+**改动（均在 `code_accuraccy/validation_review.js`）**：
+
+| 位置（改后行号） | 改动 |
+|---|---|
+| `:16-18` | 文件头差异第 2 条补一句：【改动39】再移除 4.5b 尾段诊断，越界报警仍由末尾自检承担 |
+| `:141-144` | 1 节删 `var S2_TAIL_DIAG = true;` 与开关注释块，替换为【改动39】说明 |
+| `:916-922` | 4.5b 整段诊断（`tailHits` / `tailHeadCol` / `tailCol` / `tailValid` / `tailDiag` 5 波段 `ee.Image.cat` / `reduceRegion` / 三条 print）替换为说明注释 |
+| `:391` | 事件表 `Wuhan_2025_0522` 内「【改动31】诊断也不再触发」→「尾段诊断（【改动39】已移除）也不再触发」 |
+| `:415` | 对照事件说明「越界自检与尾段诊断都会跳过」→「越界自检会跳过（尾段诊断已移除）」 |
+| `:650-652` | `s2ValidBand` 注释去掉"与越界尾段诊断共用同一写法" |
+| `:1262` | `s2WindowOverlapHits` 头注释去掉"4.5b 用同一条判定" |
+
+**保留的内容与理由**（切勿顺手删）：
+
+- `s2WindowOverlapHits(ev)`——纯 JS 判定函数，末尾启动自检靠它打全表；
+- `reportS2WindowOverlaps()` 与其调用语句——脚本加载时跑一次，不连 GEE、零算力，是"日后新增事件/改窗自动报警"的**唯一护栏**；
+- `s2ValidBand` / `isoDate` / `bjToUTC` / `S2_POST_PAD_DAYS` / 事件表三处 `s2PostEnd`——各有主流程用途。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| `stratum` / `stratumHist` / `reviewImage` / `REVIEW_SELECTORS` 27 列 | 不变 |
+| 事件表、三个 `s2PostEnd`、S2 窗口、抽样 | 不变 |
+| 每场 GEE 请求次数 | **不变**（该分支本就恒不执行） |
+| Console 输出 | **看不出差别**（该诊断当前无命中，本就不打印） |
+| 越界护栏 | **保留**（末尾 `【改动29】S2 后窗越界自检` 每次加载打印一行） |
+
+**风险与待办**：
+
+- 删掉后若某天真要重新量化"尾段丢多少"，用 `doc/labelConsole2.md` 的口径单独跑（`2025_0522` 参考数：整窗 755,178 px、只在尾段有效 4,444 px = 0.6%），不要靠 Console 输出反推。
+- 启动自检只覆盖"暴雨起点落在本场 S2 后窗内"这一种越界形态；其它窗口异常仍要看 4.3 的"窗口内没有可用影像"警告。
+
+**静态校验**：未在 GEE 实跑（AI 无法执行 GEE 脚本），仅 `node --check code_accuraccy/validation_review.js` 通过（语法），并 grep 确认 `S2_TAIL_DIAG` / `tailDiag` / `n_tail` / `nWindowValid` 已无代码残留引用（余者仅为说明注释）。
+
+**验收步骤**：
+
+1. 在 Code Editor Run（三场即可），确认无 `is not defined` 类报错；
+2. Console 顶部仍应出现一行 `【改动29】S2 后窗越界自检：未发现相邻暴雨窗口重叠。`（这正是保留的护栏）；
+3. Console 不应再出现 `【改动31】… 的 S2 后窗越界尾段诊断`；
+4. 面板能正常跳点、记录、导出判读 CSV。
+
+---
+
 ## 6. 诊断工具箱（用过什么、结论是什么）
 
 | 诊断 | 目的 | 结论 / 数值 | 现状 |
@@ -714,7 +769,7 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 | `capacity exceeded` 排查 | 交互会话配额被打满 | 19 事件 × 每事件多次**阻塞式** `getInfo`（`reduceRegion().getInfo()`、`size().getInfo()`） | 已通过窗口修复 + 分批运行缓解 |
 | 导出 `selectors` | 防止 CSV 列名与取值错位 | 不加 `selectors` 时表头与取值顺序可能不一致；且曾把两处 selectors 写反 | 已修正 |
 | 模块路径 `require()`（`events.js` / `flood_pseudolabel.js`） | 判断模块 ID 写法 | 格式为 `users/<用户>/<文件夹>:<脚本名>`；路径/大小写/保存状态任一不符即 `Module not found` | 方案搁置 |
-| 越界尾段的晴空贡献（【改动31】） | 回答"越界了要不要截" | 判据：`n_tail_excl ÷ n_window` > 5% 不能截（会丢光学证据），≤5% 才能安全截。**实测 `2025_0522`：整窗 755,178 / 只在尾段有效 4,444 px = 0.6%** → 判定"可以截"，已在事件表加 `s2PostEnd: '2025-06-07 00:00'`；截断后自检命中数 1 → 0 | 保留（命中才打印；截断后当前无命中） |
+| 越界尾段的晴空贡献（【改动31】） | 回答"越界了要不要截" | 判据：`n_tail_excl ÷ n_window` > 5% 不能截（会丢光学证据），≤5% 才能安全截。**实测 `2025_0522`：整窗 755,178 / 只在尾段有效 4,444 px = 0.6%** → 判定"可以截"，已在事件表加 `s2PostEnd: '2025-06-07 00:00'`；截断后自检命中数 1 → 0 | 主脚本 `code/pseudo_labels1.js` 保留（`S2_TAIL_DIAG = true`，命中才打印；截断后当前无命中）；**判读台 `code_accuraccy/validation_review.js` 侧副本已在【改动39】删除** |
 
 ---
 
@@ -787,7 +842,7 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 | 全量 18 事件（**当前默认**） | `RUN_EVENT_NAMES = null`（【改动31】已把这行改回全量，与 `Summary9` 一致） |
 | 单独复核某一两场 | `RUN_EVENT_NAMES` 改成数组，如 `['Wuhan_2025_0522']`、`['Wuhan_2017_0824']` |
 | 5 事件对照（【改动24】留档） | 数组 `['Wuhan_2021_0823','Wuhan_2022_0627','Wuhan_2023_0618','Wuhan_2023_0719','Wuhan_2020_0705']` |
-| 关闭越界尾段诊断 | `S2_TAIL_DIAG = false`（默认 `true`，只对命中事件多跑 1 次 `reduceRegion`） |
+| 越界尾段诊断 | **【改动39】已删除**（`S2_TAIL_DIAG` 与 4.5b 整段移除）；越界报警看末尾【改动29】的启动自检，每次加载打印一行 |
 | S2 云掩膜对照 | `S2_CLOUD_MASK = 'QA60'`（默认，原口径）/ `'SCL_AND_QA60'`（L2A 更严；走 L1C 的事件自动退回 QA60） |
 | "零暴雨"对照事件 | `RUN_EVENT_NAMES = ['Wuhan_2022_0601_CTRL','Wuhan_2023_0525_CTRL']`（默认全量不跑；对照事件不进任何划分） |
 | 光学口径对照（峰值 vs 典型） | 把 `S2_INDEX_STAT` 由 `'max'` 改成 `'median'`（窗口、去云都不动，只换指数统计量） |
