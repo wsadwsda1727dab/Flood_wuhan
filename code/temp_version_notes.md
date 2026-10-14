@@ -12,6 +12,7 @@
 > 2026-09-29 增补：**【改动34】Sentinel-1 IW GRD 预/后向散射初值约束**——`sarFlood01` 增加事件前非水、事件后为水条件，用于排除事件前已有水体；新增参数见第 4 节，规则说明见第 5 节末。
 > 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE = 10`，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。
 > 2026-09-30 增补：**【改动37】`validation_review.js` 定位收敛为「只做目视判读精度评价」**——移除 4.13 那条按 `label` 抽正负两类的训练样本点链（含 `POINTS_PER_CLASS`、`SAMPLE_SELECTORS`、`samples.size()` 阻塞调用、`allSamples` 合并、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出）。判读点链（5 层 / 10 m）不受影响；`summary.sample_count` 固定为 `null`。见第 5 节末。
+> 2026-09-30 增补：**【改动38】`validation_review.js` 再移除逐场汇总表链**——4.12 `countImage`/`counts`、4.14 汇总行（`sensCommon`/`nFloodAt`/`summary` 全字段）、4.15 S2 质控、`summaryBase()` 与 `SUMMARY_SELECTORS`、`summaryFC` 与 `EXPORT_SUMMARY`、`LOW_S2_COVER_MIN`/`MIN_HIGH_FLOOD_SHARE`/`NO_OPTICAL_COVER` 三个阈值一并删除。从此该文件**没有任何 `Export`**，唯一出口是判读结果 CSV；需要汇总表与像元计数请跑主脚本 `code/pseudo_labels1.js`。判读点链不受影响。见第 5 节末。
 
 ---
 
@@ -636,6 +637,63 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 2. Console 里不应再出现「所有时段合并样本总数」「按事件统计样本数」「按标签统计样本数」三条 print；
 3. Console 的「判读事件与候选点数」「按事件留出」与改前一致，面板能正常跳点、记录、导出判读 CSV；
 4. 汇总表若导出，`sample_count` 应为空、`status` 为 `OK`，其余列与改前一致。
+   （此条在【改动38】后已不适用：汇总表链连 `EXPORT_SUMMARY` 一起删掉了。）
+
+---
+
+### validation_review.js【改动38】：移除逐场汇总表链（判读台不再产出任何汇总 CSV）
+
+**触发（2026-09-30）**：【改动37】之后，`validation_review.js` 的产物只剩判读结果 CSV，但 `buildEvent` 里仍留着第一阶段 `validation_points.js` 的逐场汇总表链。判读台一个字段都不读（第二部分读的是 `r.reviewImage` / `r.stratum` / `r.stratumHist` / `r.roi` / `r.featureStack`），却每场都要付代价：
+
+1. 4.12 `countImage`（8 波段：`n_flood` / `n_nonflood` / `n_high_flood` / `n_medium_flood` / `n_high_nonflood` / `n_medium_nonflood` / `n_s2valid` / `n_valid`）的 `reduceRegion(...).getInfo()`——一次全幅像元计数阻塞往返；
+2. 4.14 `nFloodAt(-3.5)` / `nFloodAt(-4.5)` 两次全幅 `sum`、`s1_valid_cover` 一次全幅 `mean`、`flood_area_km2` / `valid_area_km2` 两次 `pixelArea` 全幅 `sum`；
+3. `print('每时段汇总表:', summaryFC)` 一句就会把整条链拉起来求值——Console 里根本看不到汇总表（要导出才有），代价却照付。
+
+**改动（共 12 处，均在 `code_accuraccy/validation_review.js`）**：
+
+| 位置（改后行号） | 改动 |
+|---|---|
+| `:13-15` | 文件头「与 `validation_points.js` 的差异」第 2 条改写：本文件此后无任何 `Export`，唯一出口是判读结果 CSV |
+| `:113-114` | 删 `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER`，留注释 |
+| `:159-160` | 删 `SUMMARY_SELECTORS`（41 列），留注释 |
+| `:604-606` | 删 `function summaryBase(ev, w, avail, s2Source)` 及其两个调用点，留注释 |
+| `:769`、`:838` | 跳过分支简化为 `return { name: ev.name, skipped: true };` |
+| `:1197-1211` | 4.12 整段（`countImage` + `counts` + 两条像元数 print）替换为说明注释 |
+| `:1205-1211` | 4.14 + 4.15 整段（`sensCommon` 定义、`nFloodAt`、`summary` 全字段、S2 质控、警告 print）替换为说明注释 |
+| `:1223-1225` | 4.16 `if (DIAG) {` 内补回 `var sensCommon = s1Valid.and(lowSlope).and(nonPermanentWater).and(opticalFlood.or(s2Valid.not()));`（DIAG 是它唯一剩下的消费者） |
+| `:1278` | return 对象去掉 `summary: summary` |
+| `:1388-1389` | 5 节删 `summaryFC` 与 `print('每时段汇总表:', summaryFC)` |
+| `:1396-1400` | 7 节删 `var EXPORT_SUMMARY = false;` 与 `if (EXPORT_SUMMARY) { Export.table.toDrive(...) }` |
+| `:104-109`、`:845`、`:923` | 三处过时注释同步（`s2_index_stat` / `vv_offset_db` / `s2_valid_px` 的口径记录已随汇总表移除） |
+
+**为什么判读不受影响**：判读点走 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE = 10 m`、`seed = SAMPLE_SEED`），读的是 `reviewImage`（4.11 特征栈 + `stratum` + 新旧标签 + 4 个阈值输入）与 `stratumHist`（4.10b），与 4.12 / 4.14 / 4.15 无引用关系。`REVIEW_SELECTORS` 27 列一个不少，判读点的数量、位置、顺序、随机性完全一致。
+
+**保留的局部量**（切勿因"汇总表没了"顺手删）：`lowSlope` / `nonPermanentWater` / `opticalFlood` / `s2Valid` / `floodUsed` / `nonFloodUsed` / `highFlood01` / `mediumFlood01` / `highNonFlood01` / `mediumNonFlood01` 全部是 `label`、`conf_*`、`stratum` 的上游；`s1preCol` / `s2srCol` / `s2l1cCol` / `avail` / `s2Source` 既喂真影像合成也喂数据可用性检查与跳过判定；`SAMPLE_SCALE`(100 m) 仍是去偏/稳定区中值与 DIAG 的统计尺度。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| `stratum` / `stratumHist` / `reviewImage` / `REVIEW_SELECTORS` 27 列 | 不变 |
+| 逐场阻塞往返次数 | **减 5**（`counts`、`s1_valid_cover`、`nFloodAt`×2、两次 `pixelArea`） |
+| Console 的每场「洪涝 N 像元 / 非洪涝 N 像元」、逐景偏移摘要 | **移除**（要看就打开 `DIAG`，或跑主脚本的 Summary） |
+| 本文件的 `Export` 数量 | **归零** |
+
+**风险与待办**：
+
+- 本文件不再产出汇总 CSV。若后续要 `Wuhan_2016_2025_Flood_Event_Summary` 的新版，必须回主脚本 `code/pseudo_labels1.js` 跑，不要在这里恢复汇总链。
+- 原先依赖 `s2_qc_flag` 判断"某场是否 `NO_OPTICAL`"（判读台侧）已不可用；该判断改看主脚本 Summary 的 `s2_qc_flag`，或看本文件 DIAG 的 S2 覆盖诊断输出。
+- `sensCommon` 现在只在 `DIAG = true` 时构造，随 DIAG 一同处于关闭状态（`DIAG = false`）。
+
+**静态校验**：未在 GEE 实跑（AI 无法执行 GEE 脚本），仅 `node --check code_accuraccy/validation_review.js` 通过（语法），并 grep 确认 `summary` / `SUMMARY_SELECTORS` / `counts` / `countImage` / `nFloodAt` / `summaryFC` / `EXPORT_SUMMARY` / `r.summary` / `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` / `s2_qc_flag` / `n_valid_px` / `s1_valid_cover` / `offset_spread_db` / `flood_sens_ratio` / `n_flood_at_m` / `flood_area_km2` 均已无代码残留引用（余者仅为说明注释）。
+
+**验收步骤**：
+
+1. `RUN_EVENT_NAMES` 保持三场，在 Code Editor Run，确认无 `is not defined` 类报错（重点看 `sensCommon` / `summary` / `counts` 是否还有漏改的引用）；
+2. Console 里不应再出现「像元统计(scale=100m)」「每时段汇总表」两条 print，也不应出现 S2 质控警告；
+3. Console 的「判读事件与候选点数」「按事件留出」、分层像元数直方图与改前一致，面板能正常跳点、记录、导出判读 CSV；
+4. `DIAG` 若临时打开，4.16 诊断段不应报 `sensCommon is not defined`。
 
 ---
 

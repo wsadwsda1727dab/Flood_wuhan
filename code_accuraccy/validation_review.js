@@ -10,8 +10,9 @@
 // （含"版本差异层"——约束前判洪、约束后被删的像元，这类点在训练样本里根本不存在）。
 // 与 validation_points.js 的差异（文件内均以「【第二阶段】」「【改动34】」「【改动37】」标注）：
 //   1) 顶部加本说明；
-//   2)【改动37】已移除训练/验证样本点链（样本抽样 + EXPORT_ALL / EXPORT_PER_EVENT 两个导出），
-//      只留汇总表导出开关 EXPORT_SUMMARY（当前也是 false）；
+//   2)【改动37】已移除训练/验证样本点链（样本抽样 + EXPORT_ALL / EXPORT_PER_EVENT 两个导出）；
+//      【改动38】又移除了汇总表链（countImage/counts、4.14 汇总行、4.15 质控、summaryFC 与
+//      EXPORT_SUMMARY），本文件此后**没有任何 Export**，唯一出口是判读结果 CSV；
 //   3) 去掉旧的"显示"块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 //   4) buildEvent 返回值里多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；
 //   5)【改动34】同步 4 个新阈值 + 新增判读分层带（stratum）/ 新旧标签（new_label、
@@ -105,22 +106,15 @@ var S2_POST_PAD_DAYS = 18;
 //                 只会让水体判定更宽松、不会更严，MNDWI_THRESHOLD 的含义也清晰（推荐）
 //      'median' = 逐景指数取中值，更保守，留作对照/敏感性分析
 //  注意：换口径后导出的 MNDWI / NDVI 特征含义随之变化（最大值而非典型值），
-//        与改动25 之前那几版样本不能直接混用；summary 里的 s2_index_stat 记录了本次口径。
+//        与改动25 之前那几版样本不能直接混用；汇总表里的 s2_index_stat 记录本次口径
+//        （【改动38】本文件已不产出汇总表，口径记录只在主脚本 code/pseudo_labels1.js 里）。
 //  【改动26】S2_Valid 已与 S2_INDEX_STAT 解耦（见 4.5 节）：有效覆盖恒取"窗口内至少一次有效观测"，
 //        切到 'median' 时不再顺带收紧覆盖。此前 18 天档的 median 配对（Summary7）就是被这个耦合污染的。
 var S2_INDEX_STAT = 'max';
 
-// ---- 【改动27】S2 光学覆盖质控阈值 ----
-//  背景：18 天档逐景 max 的全量跑（Summary8）里有两场事件的光学证据几乎为零——
-//    2024_0621（S2 后窗被截到 6 天 + 全窗口被云盖）与 2017_0824（S2 源翻到 L2A 后覆盖崩掉）。
-//    这两场的 SAR 洪水候选 100% 落进 Medium Flood、High Flood = 0，标签退化成"纯 SAR 推断"，
-//    与其他"光学双确认"事件语义不一致，直接混训会污染标签。
-//  所以每场跑完自动算两个量并打标记，避免以后再靠人工比对才发现：
-//    s2_cover_valid_frac = S2 有效像元 / SAR 有效区像元（>1 表示 S2 覆盖超出 SAR 有效区之外）
-//    high_flood_share    = High Flood / (High + Medium Flood)，即正样本的"光学背书纯度"
-var LOW_S2_COVER_MIN = 0.5;      // 低于此比例 → LOW_S2_COVER
-var MIN_HIGH_FLOOD_SHARE = 0.3;  // 正样本 High 占比低于此值 → LOW_S2_COVER
-var NO_OPTICAL_COVER = 0.05;     // 低于此比例 → NO_OPTICAL（基本没有光学证据）
+// ---- 【改动38】S2 光学覆盖质控阈值（LOW_S2_COVER_MIN / MIN_HIGH_FLOOD_SHARE /
+//   NO_OPTICAL_COVER）已随 4.15 汇总表质控一并移除：它们的唯一用途是写 s2_qc_flag 列，
+//   而本文件只做目视判读精度评价，不再产出汇总表。
 
 // ---- GRD 切片填充值 ----
 //  Sentinel-1 GRD 按 25 秒切片存储，切片范围外的像元填的是很负的 dB 值（不是 0），
@@ -155,7 +149,9 @@ var S2_TAIL_DIAG = true;
 //                    L1C 没有 SCL 波段，走 L1C 的事件只能用这一档。
 //   'SCL_AND_QA60' ：L2A 有 SCL 波段，额外排除 1 饱和 / 3 云影 / 8 中概率云 / 9 高概率云 /
 //                    10 卷云 / 11 雪，并与 QA60 取交集（更严）。
-//   用法：同一事件在两种口径下各跑一次，比较 `s2_cover_valid_frac` / `high_flood_share` / 面积——
+//   用法：同一事件在两种口径下各跑一次，比较 s2_cover_valid_frac / high_flood_share / 面积——
+//        （这两个量原本由 4.15 质控写进汇总表；【改动38】汇总表已删，
+//         现在只能看主脚本 code/pseudo_labels1.js 的 Summary 表或本文件 DIAG 诊断输出。）
 //        若换成 SCL 后 High 面积塌掉，说明标签是"逐景 max"把残云当水撑起来的。
 //   注意：L1C 无 SCL → 走 L1C 的事件自动退回 QA60（Console 会写明）。
 var S2_CLOUD_MASK = 'QA60';
@@ -164,30 +160,9 @@ var S2_CLOUD_MASK = 'QA60';
 // 文档里的事件时间是北京时间，GEE 的 filterDate 按 UTC 处理，这里统一换算。
 var TZ_OFFSET_HOURS = 8;
 
-// 汇总 CSV 的列（顺序即导出后的列顺序）
-// 【改动37】原 SAMPLE_SELECTORS（样本 CSV 列）已随样本点链一并移除。
-var SUMMARY_SELECTORS = [
-  'event_id', 'year', 'storm_start_bj', 'storm_end_bj',
-  'pre_window_utc', 'post_window_utc', 'pre_days', 'post_days',
-  // 【改动24】S1 / S2 后窗口拆开后各自的窗口信息
-  //   post_window_utc / post_days 沿用旧列名，含义收敛为「Sentinel-1 后窗口」（值不变）；
-  //   S2 的短窗口单独存两列，便于和 18 天窗口的旧结果横向对照。
-  's2_post_window_utc', 's2_post_days',
-  // 【改动25】记录本次的光学合成口径（逐景算指数后取 max 还是 median），
-  //   否则 max / median / 波段级统计三套结果混在一起就无法区分。
-  's2_index_stat',
-  'area', 'rain_ref_mm', 'rainfall',
-  's1_pre_count', 's1_post_count', 's2_source', 's2_count',
-  'n_flood_px', 'n_nonflood_px', 'n_high_flood_px', 'n_medium_flood_px',
-  'n_high_nonflood_px', 'n_medium_nonflood_px', 's2_valid_px',
-  's1_valid_cover', 'vv_offset_db', 'vh_offset_db',
-  'debias_mode',
-  'offset_spread_db', 'n_flood_at_m35', 'n_flood_at_m45', 'flood_sens_ratio',
-  'flood_area_km2', 'valid_area_km2',
-  // 【改动27】S2 光学覆盖质控：覆盖率、正样本 High 占比、以及自动标记
-  'n_valid_px', 's2_cover_valid_frac', 'high_flood_share', 's2_qc_flag',
-  'sample_count', 'status'
-];
+// 【改动38】原 SUMMARY_SELECTORS（41 列汇总表列名）与 4.14/4.15 汇总表链一并移除；
+//   更早的 SAMPLE_SELECTORS（样本 CSV 列）已在【改动37】随样本点链移除。
+//   本文件不再产出任何汇总 CSV，只产出判读结果 CSV（第二部分 exportRecords）。
 
 // ============================================================================
 // 2.【改动1】事件表（数据来自 doc/2016_2025.docx，共 19 个时段）
@@ -630,46 +605,9 @@ var FEATURE_NAMES = [
   'NDVI', 'MNDWI', 'DEM', 'slope', 'S2_Valid'
 ];
 
-// 汇总表的基础字段（每个时段一行）
-function summaryBase(ev, w, avail, s2Source) {
-  return {
-    event_id: ev.name,
-    year: ev.year,
-    storm_start_bj: ev.start,
-    storm_end_bj: ev.end,
-    pre_window_utc: w.preStartStr + ' ~ ' + w.preEndStr,
-    // post_window_utc / post_days 沿用旧列名，含义收敛为「Sentinel-1 后窗口」
-    post_window_utc: w.s1PostStartStr + ' ~ ' + w.s1PostEndStr,
-    pre_days: w.preDays,
-    post_days: w.s1PostDays,
-    // 【改动24/25】Sentinel-2 后窗 = S2_POST_PAD_DAYS(18) 天（个别事件用 s2PostEnd 收窄），单独记两列
-    s2_post_window_utc: w.s2PostStartStr + ' ~ ' + w.s2PostEndStr,
-    s2_post_days: w.s2PostDays,
-    // 【改动25】光学合成口径，便于跨版本追溯
-    s2_index_stat: S2_INDEX_STAT,
-    area: ev.area,
-    rain_ref_mm: ev.rainRefMM,
-    rainfall: ev.rain,
-    s1_pre_count: avail.s1_pre_count,
-    s1_post_count: avail.s1_post_count,
-    s2_source: s2Source,
-    s2_count: avail.s2_sr_count + avail.s2_l1c_count,
-    n_flood_px: null,
-    n_nonflood_px: null,
-    n_high_flood_px: null,
-    n_medium_flood_px: null,
-    n_high_nonflood_px: null,
-    n_medium_nonflood_px: null,
-    s2_valid_px: null,
-    // 【改动27】S2 光学覆盖质控（跳过的时段也保留列）
-    n_valid_px: null,
-    s2_cover_valid_frac: null,
-    high_flood_share: null,
-    s2_qc_flag: null,
-    sample_count: null,
-    status: 'SKIPPED_NO_S1'
-  };
-}
+// 【改动38】原 summaryBase(ev, w, avail, s2Source)：逐时段汇总表的 41 列基础字段。
+//   本文件只做目视判读精度评价，汇总表（4.14/4.15）已在【改动38】整块移除，
+//   summaryBase 的调用点（跳过分支 / 4.14）也一并去掉，故整个函数删除。
 
 function buildEvent(ev) {
   var roi = ev.roi || DEFAULT_ROI;
@@ -832,10 +770,10 @@ function buildEvent(ev) {
   if (avail.s1_pre_count === 0 || avail.s1_post_count === 0) {
     print('⚠ ' + ev.name + '：事件前或事件后窗口内没有 S1 影像，跳过该时段'
       + '（可增大 S1_POST_PAD_DAYS 或调整窗口后重跑）。');
+    // 【改动38】原先这里还带一份 summaryBase(...) 摘要行，随汇总表链一并移除。
     return {
       name: ev.name,
-      skipped: true,
-      summary: summaryBase(ev, w, avail, s2Source)
+      skipped: true
     };
   }
 
@@ -904,7 +842,8 @@ function buildEvent(ev) {
   //   'perImage' ：扣的是"逐景校正之后剩下的残差"（实测 +0.25 dB 量级）。
   //                逐景校正已经处理掉轨道间的差异（~1.06 dB），这里只是 0.25 dB 级微调，
   //                目的是让 VV_diff / VH_diff 的中位数彻底回到 0；不会重现"沿轨道条纹"。
-  //   summary 里的 vv_offset_db / vh_offset_db 记录被扣掉的量，便于跨事件比较。
+  //   vvOff / vhOff 就是被扣掉的量（【改动38】原记录进汇总表 vv_offset_db / vh_offset_db 列，
+  //   汇总表删除后只在 DIAG 输出的逐景偏移表里可见）。
   var vvOff = ee.Number(0);
   var vhOff = ee.Number(0);
   if (DEBIAS_MODE !== 'none') {
@@ -982,6 +921,7 @@ function buildEvent(ev) {
   //   判据：不是 s2_count（那只是集合大小，L2A/L1C 各算一遍），而是
   //     "整窗有效像元里有多少只在尾段有效" = n_tail_excl（截掉就丢的量）。
   //   判读（与 s2_valid_px 同口径：sum 面积加权、scale = SAMPLE_SCALE）：
+  //     （s2_valid_px 这个汇总列已在【改动38】随汇总表移除，诊断仍按同一口径算量）
   //     n_tail_excl / n_window 很小 → 尾段没带来新的晴空观测，可以安全截到后一场起点之前；
   //     明显偏大                  → 不要截，按【改动28】把两场合并为一场。
   //   参考阈值 5%：低于它，截断造成的光学证据损失可忽略。
@@ -1260,151 +1200,36 @@ function buildEvent(ev) {
     .addBands(vh_post_c.rename('VH_post_c'));
 
   // ----------------------------------------------------------
-  // 4.12【改动9】每时段像元统计（一次 reduceRegion 取回全部计数）
-  //   原 temp.js 是对 High Flood / Medium Flood / High Non-Flood 各做一次
-  //   reduceRegion(count)，共 3 次；这里合并成 1 次多波段求和。
-  // ----------------------------------------------------------
-  var countImage = floodUsed.toInt().rename('n_flood')
-    .addBands(nonFloodUsed.toInt().rename('n_nonflood'))
-    .addBands(highFlood01.toInt().rename('n_high_flood'))
-    .addBands(mediumFlood01.toInt().rename('n_medium_flood'))
-    .addBands(highNonFlood01.toInt().rename('n_high_nonflood'))
-    .addBands(mediumNonFlood01.toInt().rename('n_medium_nonflood'))
-    .addBands(s2Valid.toInt().rename('n_s2valid'))
-    // 【改动27】SAR 有效像元数（= 面积加权），作为 S2 覆盖率的分母，同一次 reduceRegion 取回
-    .addBands(s1Valid.unmask(0).toInt().rename('n_valid'));
-
-  var counts = countImage.reduceRegion({
-    reducer: ee.Reducer.sum(),
-    tileScale: 8,
-    geometry: geom,
-    scale: SAMPLE_SCALE,
-    bestEffort: true,
-    maxPixels: 1e10
-  }).getInfo() || {};
-
-  // ----------------------------------------------------------
-  // 4.13【改动37】原训练/验证样本点抽样（stratifiedSample by label）已移除。
-  //   本文件只服务目视判读精度评价，判读点由第二部分的 buildReviewPoints() 按 5 层
-  //   单独抽（scale = REVIEW_SAMPLE_SCALE = 10 m），与这里的训练样本点是两条链：
-  //     - 训练样本点：classBand='label'（正负 2 类）、每类 POINTS_PER_CLASS 上限、
-  //                   scale = SAMPLE_SCALE（100 m）→ 只进样本 CSV，无人消费；
-  //     - 判读点  ：classBand='stratum'（5 层）、REVIEW_POINTS_PER_STRATUM 上限、
-  //                   scale = REVIEW_SAMPLE_SCALE（10 m）→ 判读面板与 reference CSV。
-  //   顺带消除一处口径隐患：原样本链是 100 m，而主脚本 code/pseudo_labels1.js
-  //   【改动36】后已改为 10 m，开关一旦打开就会静默导出错误尺度的样本。
-  //   同时省掉一次 samples.size() 阻塞往返（与 pseudo_labels1.js 全量跑报错同型）。
+  // 4.12【改动38】原每时段像元统计（countImage 8 波段 + counts reduceRegion，scale = 100 m，
+  //   tileScale 8，bestEffort，maxPixels 1e10）已整块移除。
+  //   它此前只被两处消费：4.14 汇总表（已移除）与两条 print。
+  //   本文件只做目视判读精度评价，逐场洪涝/非洪涝像元数不再是判读输入；
+  //   删掉后每场少一次全幅 100 m sum（对标度最大的那次 reduceRegion）。
+  //   需要这些计数时看主脚本 code/pseudo_labels1.js 的 Summary 表或它自己的 console 打印。
   // ----------------------------------------------------------
 
-  print('像元统计(scale=' + SAMPLE_SCALE + 'm):', counts);
-  print('该时段结果: 洪涝 ' + (counts.n_flood || 0)
-    + ' 像元 / 非洪涝 ' + (counts.n_nonflood || 0)
-    + ' 像元 | S2 有效像元 ' + (counts.n_s2valid || 0));
-
-  // 【改动22】QC 指标的两个量（都写进汇总表，19 个事件导出来一张表就能横向比）
-  //   sensCommon：除 SAR 阈值以外的其余标签条件（与最终洪涝标签同一套，忽略 High/Medium 之分）
-  var sensCommon = s1Valid.and(lowSlope).and(nonPermanentWater)
-    .and(opticalFlood.or(s2Valid.not()));
-  function nFloodAt(thr) {
-    var candAt = vv_diff.lt(thr).and(vh_diff.lt(VH_THRESHOLD))
-      .unmask(0).and(sensCommon);
-    // 必须用 sum（与标签的 countImage.reduceRegion 口径一致）。
-    // 注意两者的物理含义不同：sum 是"面积加权像元数"——部分覆盖的 100 m 像元按覆盖比例
-    //   计入（本事件 1200.35）；而 count(selfMask()) 数的是"至少含一个洪水像元的网格数"
-    //   （本事件 2001），后者会明显偏大，因为一个只覆盖 20% 的网格也被算作 1。
-    return ee.Number(candAt.reduceRegion({
-      reducer: ee.Reducer.sum(), geometry: geom,
-      scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10}).values().get(0));
-  }
-
-  // ----------------------------------------------------------
-  // 4.14 汇总行
-  // ----------------------------------------------------------
-  var summary = summaryBase(ev, w, avail, s2Source);
-  summary.n_flood_px = counts.n_flood || 0;
-  summary.n_nonflood_px = counts.n_nonflood || 0;
-  summary.n_high_flood_px = counts.n_high_flood || 0;
-  summary.n_medium_flood_px = counts.n_medium_flood || 0;
-  summary.n_high_nonflood_px = counts.n_high_nonflood || 0;
-  summary.n_medium_nonflood_px = counts.n_medium_nonflood || 0;
-  summary.s2_valid_px = counts.n_s2valid || 0;
-  // 【改动20】覆盖率与去偏量写进汇总表，便于追溯（有效区占比、扣掉的偏移量）
-  summary.s1_valid_cover = s1Valid.reduceRegion({
-    reducer: ee.Reducer.mean(), geometry: geom, scale: 200,
-    bestEffort: true, maxPixels: 1e9}).values().get(0);
-  summary.debias_mode = DEBIAS_MODE;
-  summary.vv_offset_db = vvOff;
-  summary.vh_offset_db = vhOff;
-  // 偏移离散度 = 后时相各景自身偏移的 max − min。
-  //   >0.5 dB 说明两条轨道/日期的背景差得多，全局去偏不够用，该事件必须用 perImage。
-  summary.offset_spread_db = ee.Number(postCorrCol.aggregate_max('vv_off_db'))
-    .subtract(ee.Number(postCorrCol.aggregate_min('vv_off_db')));
-  // 阈值敏感性：洪涝像元数在 -3.5 / -4.5 两档的比值（>1，越接近 1 越稳）
-  var nSensLo = nFloodAt(-3.5);
-  var nSensHi = nFloodAt(-4.5);
-  summary.n_flood_at_m35 = nSensLo;
-  summary.n_flood_at_m45 = nSensHi;
-  summary.flood_sens_ratio = nSensLo.divide(nSensHi);
-  // 【改动23】面积口径：n_flood_px 用的 sum 本身就是"面积加权像元数"（部分覆盖按比例计入），
-  //   乘 0.01 km² 即得面积（本事件 1200.35 → 约 12.0 km²）。这里再用 pixelArea 直接算物理面积，
-  //   二者互为校验，应该接近。valid_area_km2 是有效区（s1Valid = 1）的面积，作为占比的分母。
-  summary.flood_area_km2 = floodUsed.unmask(0)
-    .multiply(ee.Image.pixelArea()).divide(1e6)
-    .reduceRegion({reducer: ee.Reducer.sum(), geometry: geom, scale: SAMPLE_SCALE,
-      bestEffort: true, maxPixels: 1e10}).values().get(0);
-  summary.valid_area_km2 = s1Valid.unmask(0)
-    .multiply(ee.Image.pixelArea()).divide(1e6)
-    .reduceRegion({reducer: ee.Reducer.sum(), geometry: geom, scale: SAMPLE_SCALE,
-      bestEffort: true, maxPixels: 1e10}).values().get(0);
-  summary.sample_count = null;   // 【改动37】样本点链已移除，此列不再有值（列保留以免与旧表串列）
-  summary.status = 'OK';
-
-  // ----------------------------------------------------------
-  // 4.15【改动27】S2 光学覆盖质控（每场自动标记，不再靠人工比对）
-  //   两个量都在 JS 侧算（counts 已经从一次 reduceRegion 取回，不额外增加阻塞调用）：
-  //     s2_cover_valid_frac = S2 有效像元 / SAR 有效像元
-  //     high_flood_share    = High / (High + Medium)，正样本的"光学背书纯度"
-  //   标记规则：
-  //     NO_OPTICAL     —— 覆盖率 < 5%，或正样本 High 占比 = 0（标签退化成纯 SAR 推断）
-  //     LOW_S2_COVER   —— 覆盖率 < 50%，或 High 占比 < 30%（光学证据明显不足）
-  //     OK             —— 其余
-  //   注：`status` 列保持旧语义（OK / NO_SAMPLE / SKIPPED_NO_S1）不变，
-  //       质控结果单独放 `s2_qc_flag`，这样新旧汇总表在 status 上仍可直接对照。
-  // ----------------------------------------------------------
-  var nValidPx = counts.n_valid || 0;
-  var nFloodTot = counts.n_flood || 0;
-  var s2CoverFrac = (nValidPx > 0) ? (counts.n_s2valid || 0) / nValidPx : 0;
-  var highFloodShare = (nFloodTot > 0) ? (counts.n_high_flood || 0) / nFloodTot : 0;
-
-  summary.n_valid_px = nValidPx;
-  summary.s2_cover_valid_frac = s2CoverFrac;
-  summary.high_flood_share = highFloodShare;
-
-  var noOptical = (nFloodTot > 0)
-    && (s2CoverFrac < NO_OPTICAL_COVER || highFloodShare === 0);
-  var lowS2Cover = (s2CoverFrac < LOW_S2_COVER_MIN)
-    || (nFloodTot > 0 && highFloodShare < MIN_HIGH_FLOOD_SHARE);
-  summary.s2_qc_flag = noOptical ? 'NO_OPTICAL' : (lowS2Cover ? 'LOW_S2_COVER' : 'OK');
-
-  if (noOptical || lowS2Cover) {
-    print('⚠ ' + ev.name + '：S2 光学证据不足（s2_qc_flag = ' + summary.s2_qc_flag + '）'
-      + '—— S2 有效覆盖 ' + (s2CoverFrac * 100).toFixed(1) + '%（阈值 '
-      + (LOW_S2_COVER_MIN * 100) + '%）、正样本 High 占比 '
-      + (highFloodShare * 100).toFixed(1) + '%（阈值 ' + (MIN_HIGH_FLOOD_SHARE * 100)
-      + '%）。该事件的正样本多为"无光学背书"的 Medium Flood，标签语义与光学双确认事件不同，'
-      + '建议核实 S2 源/窗口（看上面的 s2_source / s2_count / s2_sr_date 打印）后重跑，或单独剔除。');
-  }
+  // 【改动38】原 4.14 汇总行（summaryBase + counts 7 列 + s1_valid_cover + 偏移量 +
+  //   nFloodAt(-3.5/-4.5) 阈值敏感性 + flood_area_km2/valid_area_km2 两次 pixelArea
+  //   + sample_count/status）与 4.15 S2 光学覆盖质控（s2_qc_flag）已整块移除。
+  //   它们只产出汇总表，判读台不消费；其中 nFloodAt 两次全幅 sum、两次 pixelArea 全幅 sum
+  //   是每场较重的阻塞调用。
+  //   注：sensCommon / lowSlope / nonPermanentWater / opticalFlood / s2Valid 等局部量本身保留，
+  //   它们仍是标签与分层带（label / conf_* / stratum）的上游。
 
   // ----------------------------------------------------------
   // 4.16【改动22】诊断输出（DIAG = true 时才跑）
   //   正式跑数据保持 false；复核单个事件时打开，看四项：
   //   (1) 逐景偏移一览  —— QC：有无偏移离群的景、两条轨道差多少
-  //   (2) 5 档阈值敏感性 —— 论文稳健性表（比值已进 summary，这里是全表）
+  //   (2) 5 档阈值敏感性 —— 论文稳健性表（【改动38】汇总表已移除，这里只打全表）
   //   (3) 参考期基线检验 —— 论证"背景漂移真实存在"，换研究区/换季节时重跑
   //                         2025_0607 的结论备查：orbit 40 ≈ 0，orbit 113 ≈ −1.1 dB
   //   (4) 目视图层 —— 判断"去偏新增"像元的形态；三层是包含关系，一次只开一层看
   // ----------------------------------------------------------
   if (DIAG) {
+    // 【改动38】sensCommon 原本定义在 4.14 汇总行里（nFloodAt 的共用条件），
+    //   汇总行删除后它只剩这里的诊断用途，故移进 DIAG 分支本身。
+    var sensCommon = s1Valid.and(lowSlope).and(nonPermanentWater)
+      .and(opticalFlood.or(s2Valid.not()));
     print(ev.name + ' 逐景偏移 [时间, 轨道, ΔVV]:', postCorrCol.map(function (im) {
       return ee.Feature(null, {
         t: im.get('t_bj'),
@@ -1456,7 +1281,7 @@ function buildEvent(ev) {
   return {
     name: ev.name,
     skipped: false,
-    summary: summary,
+    // 【改动38】原 summary: summary 已移除（汇总表链整块删除）。
     // 【改动34】判读台专用：分层抽样影像、分层带、分层像元数、本事件 ROI
     reviewImage: reviewImage,
     stratum: stratum,
@@ -1561,38 +1386,23 @@ if (RUN_EVENT_NAMES !== null) {
 
 var results = EVENTS_TO_RUN.map(buildEvent);
 
-// 【改动12】每时段汇总表（降雨量 + 数据可用性 + 像元数）
-var summaryFC = ee.FeatureCollection(results.map(function (r) {
-  return ee.Feature(null, r.summary);
-}));
-
 print('========================================');
 print('完成时段数: ' + results.length
   + ' | 其中跳过（无 S1）的时段: ' + results.filter(function (r) {
     return r.skipped;
   }).length);
-print('每时段汇总表:', summaryFC);
+// 【改动38】原「每时段汇总表: summaryFC」这条 print 已随汇总表链移除
+//   （它一旦出现在 Console，GEE 就会把整条 4.14/4.15 汇总链求值一遍）。
 
 
 // ============================================================================
 // 6.【改动14】显示 —— 【第二阶段】已移除：伪标签图层会暴露答案（文档第十六节），
 //    判读阶段的图层统一交给文件末尾的判读台 renderEventLayers()。
 
-// 7.【改动13】导出
-//   【改动37】只保留每时段汇总表一条导出；样本 CSV 的两条导出（EXPORT_ALL /
-//   EXPORT_PER_EVENT）与它们的 selectors 已随训练样本点链一并移除。
-var EXPORT_SUMMARY = false;     // 【第二阶段】     // 每时段汇总表（降雨量 + 像元数）
-
-if (EXPORT_SUMMARY) {
-  Export.table.toDrive({
-    collection: summaryFC,
-    description: 'Wuhan_2016_2025_Flood_Event_Summary',
-    fileFormat: 'CSV',
-    selectors: SUMMARY_SELECTORS
-  });
-}
-
-// 【改动37】原 EXPORT_PER_EVENT（每时段一份样本 CSV）已随训练样本点链移除。
+// 7.【改动13】导出 —— 【改动38】已无任何 Export：
+//   原 EXPORT_SUMMARY（每时段汇总表）随汇总表链移除；
+//   更早的 EXPORT_ALL / EXPORT_PER_EVENT（样本 CSV）在【改动37】随样本点链移除。
+//   本文件唯一的成果出口是第二部分的「导出判读结果 CSV」按钮（exportRecords()）。
 
 
 // ============================================================================

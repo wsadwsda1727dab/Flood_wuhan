@@ -1,6 +1,6 @@
 # `validation_review.js` 说明文档
 
-> 对应版本：2026-09-30（含【改动34】Sentinel-1 预/后向散射约束 + 五层分层抽样、【改动35】判读点抽样尺度与统计尺度分离、【改动37】移除训练样本点链）
+> 对应版本：2026-09-30（含【改动34】Sentinel-1 预/后向散射约束 + 五层分层抽样、【改动35】判读点抽样尺度与统计尺度分离、【改动37】移除训练样本点链、【改动38】移除汇总表链）
 > 同目录相关文件：`validation_points.js`（第一阶段，导出样本点 CSV）、`validation_accuracy_report.py`（本地指标计算）、`阈值合理性与精度评价流程.md`（整体链路与原则）
 
 ---
@@ -14,7 +14,12 @@
 3. 提供面板，让你逐点看遥感证据、盲判 Flood / Non-Flood / Uncertain，并记录 `confidence`；
 4. 把判读结果导出成 CSV（`reference`），交给 `validation_accuracy_report.py` 算精度指标。
 
-它**只服务目视判读精度评价**：`buildEvent` 里原本那条「按 `label` 抽正负两类训练样本点、导出样本 CSV」的链路已在【改动37】整块移除——判读台不消费它，留着只会白跑一次 100 m × 每类 200 点的 `stratifiedSample` 和一次 `samples.size()` 阻塞请求，还会与主脚本【改动36】的 10 m 口径冲突。
+它**只服务目视判读精度评价**，两轮收敛都朝这个方向：
+
+- 【改动37】`buildEvent` 里原本那条「按 `label` 抽正负两类训练样本点、导出样本 CSV」的链路整块移除——判读台不消费它，留着只会白跑一次 100 m × 每类 200 点的 `stratifiedSample` 和一次 `samples.size()` 阻塞请求，还会与主脚本【改动36】的 10 m 口径冲突。
+- 【改动38】逐场汇总表链（`countImage`/`counts`、4.14 汇总行、4.15 S2 质控、`summaryFC` 与 `EXPORT_SUMMARY`）也整块移除——本文件不再产出任何汇总 CSV，需要汇总口径时看主脚本 `code/pseudo_labels1.js` 的 Summary 表。
+
+于是本文件**没有任何 `Export`**，唯一出口是第二部分面板上的「导出判读结果 CSV」按钮（`exportRecords()`）。
 
 它**不是 Node 脚本**：依赖 `ee.*` / `Map.*` / `ui.*` / `Export.*`，本地只能做语法检查（`node --check`），必须到 Code Editor 里 Run。
 
@@ -24,15 +29,15 @@
 
 | 位置 | 内容 | 来源 |
 | --- | --- | --- |
-| 开头注释 | 与 `validation_points.js` 的 5 处差异 | 【第二阶段】【改动34】【改动37】 |
+| 开头注释 | 与 `validation_points.js` 的 5 处差异 | 【第二阶段】【改动34】【改动37】【改动38】 |
 | 0 节 | 研究区（`wuhan` 资产） | 复用 |
-| 1 节 | 全局参数：判识阈值、抽样参数、窗口参数、去偏/云掩膜/诊断开关 | 复用 + 【改动34】4 个新阈值 |
+| 1 节 | 全局参数：判识阈值、抽样参数、窗口参数、去偏/云掩膜/诊断开关 | 复用 + 【改动34】4 个新阈值；【改动38】删质控三阈值与 `SUMMARY_SELECTORS` |
 | 2 节 | 事件表 `EVENTS`（20 条 = 18 场暴雨 + 2 场对照）、`RUN_EVENT_NAMES`、`VALIDATION_EVENT_NAMES` | 复用 + 【改动34】tune/valid 留出 |
 | 3 节 | 时间窗口工具函数（北京时 → UTC、事件前/后窗口推导） | 复用 |
-| 4 节 | `buildEvent(ev)`：单场事件的 SAR + 光学标签与证据（4.1–4.16） | 复用 + 【改动34】4.10b；**【改动37】4.13 训练样本链已移除** |
-| 5 节 | 逐时段执行 `RUN_EVENT_NAMES` 过滤 + `EVENTS_TO_RUN.map(buildEvent)` | 复用 + 【改动37】去掉 `allSamples` 合并与 3 条样本 print |
+| 4 节 | `buildEvent(ev)`：单场事件的 SAR + 光学标签与证据（4.1–4.16） | 复用 + 【改动34】4.10b；**【改动37】4.13 训练样本链已移除**；**【改动38】4.12、4.14、4.15 汇总链已移除** |
+| 5 节 | 逐时段执行 `RUN_EVENT_NAMES` 过滤 + `EVENTS_TO_RUN.map(buildEvent)` | 复用 + 【改动37】去掉 `allSamples` 合并与 3 条样本 print；【改动38】去掉 `summaryFC` 与汇总 print |
 | 6 节 | 旧的「显示」块（伪标签图层）——**已移除**，避免暴露答案 | 【第二阶段】 |
-| 7 节 | 导出开关——【改动37】只剩 `EXPORT_SUMMARY`（当前 `false`）；`EXPORT_ALL` / `EXPORT_PER_EVENT` 已删 | 【第二阶段】+【改动37】 |
+| 7 节 | 导出开关——【改动37】删 `EXPORT_ALL` / `EXPORT_PER_EVENT`；【改动38】删 `EXPORT_SUMMARY`，**本文件已无任何 Export** | 【第二阶段】+【改动37】+【改动38】 |
 | 第二部分 7.1 | 判读点表：按五层分层抽样（【改动35】抽样尺度改 10 m） | 【改动34】重写 +【改动35】 |
 | 第二部分 7.2 | 判读状态与图层管理（证据图层、点图层、高亮） | 【第二阶段】 |
 | 第二部分 7.3 | 判读面板与按钮 | 【第二阶段】+【改动34】增补显示 |
@@ -51,16 +56,16 @@
 | 4.10 | 最终 `label` 与 `conf_flood` / `conf_nonflood`（含正负冲突保护） |
 | **4.10b** | **【改动34】判读分层带 `stratum` + 新旧标签 `new_label` / `old_label` / `old_sar_flood`**；**【改动35】分层像元直方图的计数尺度改 `REVIEW_SAMPLE_SCALE`(10 m)** |
 | 4.11 | 特征栈（波段名与顺序与原 `temp.js` 一致，下游脚本不用改） |
-| 4.12 | 逐场像元统计（`counts`，8 波段 sum，仍是 100 m 统计尺度） |
+| 4.12 | **【改动38】已移除**（原为逐场像元统计 `countImage` / `counts`，8 波段 sum，100 m） |
 | 4.13 | **【改动37】已移除**（原为按 `label` 抽训练/验证样本点并导出样本 CSV） |
-| 4.14 / 4.15 | 汇总行、S2 光学覆盖质控（`s2_cover_valid_frac` / `high_flood_share` / `s2_qc_flag`） |
+| 4.14 / 4.15 | **【改动38】已移除**（原为汇总行 41 列、S2 光学覆盖质控 `s2_cover_valid_frac` / `high_flood_share` / `s2_qc_flag`） |
 | 4.16 | 诊断输出（`DIAG = true` 时才跑） |
 
 ---
 
 ## 3. 本版本新增内容（重点）
 
-> 3.1–3.5 为【改动34】引入、3.3 含【改动35】；3.6 为【改动37】的移除。
+> 3.1–3.5 为【改动34】引入、3.3 含【改动35】；3.6 为【改动37】的移除，3.7 为【改动38】的移除。
 
 ### 3.1 同步 Sentinel-1 预/后向散射约束
 
@@ -122,9 +127,9 @@ vv_diff < -4.0  ∧  vh_diff < -3.5          ← 原规则（相对下降）
 
 每层点数取 `min(该层上限, 该层实际像元数)`，像元不足自动少抽；某层像元数为 0 时该层不出点。各层像元数在 Console 里以频率直方图打印。
 
-**【改动35】抽样尺度与判读尺度对齐**：判读点的 `scale` 从 `SAMPLE_SCALE`(100 m) 换成 `REVIEW_SAMPLE_SCALE`(10 m)（`validation_review.js:1723`）。理由是判读员看的是原生 10 m 影像，用 100 m 会把点位落到格中心、取值是格内聚合值，双方测的不是同一块地（100 m 格在武汉纬度东西向仅约 86 m，一个格子里装的是上百个 10 m 像元的均值或多数类）。
+**【改动35】抽样尺度与判读尺度对齐**：判读点的 `scale` 从 `SAMPLE_SCALE`(100 m) 换成 `REVIEW_SAMPLE_SCALE`(10 m)（`validation_review.js:1533`；【改动38】前的行号是 1723）。理由是判读员看的是原生 10 m 影像，用 100 m 会把点位落到格中心、取值是格内聚合值，双方测的不是同一块地（100 m 格在武汉纬度东西向仅约 86 m，一个格子里装的是上百个 10 m 像元的均值或多数类）。
 
-同一改动还包含一处**连带的必要修复**：4.10b 的分层像元直方图也从 100 m 改到 10 m（`validation_review.js:1219`）。直方图计数单位必须与抽样单位相同，否则 `min(该层上限, 该层像元数)` 拿到的是"100 m 格数"，会把像元少的层压到上限以下（例：某层 10 m 有 1800 个像元、落到 100 m 只剩 18 格，就只会抽 18 点而不是 20 点）。
+同一改动还包含一处**连带的必要修复**：4.10b 的分层像元直方图也从 100 m 改到 10 m（`validation_review.js:1159`；【改动38】前的行号是 1219）。直方图计数单位必须与抽样单位相同，否则 `min(该层上限, 该层像元数)` 拿到的是"100 m 格数"，会把像元少的层压到上限以下（例：某层 10 m 有 1800 个像元、落到 100 m 只剩 18 格，就只会抽 18 点而不是 20 点）。
 
 该常量只用于第二部分的判读点抽样与分层计数，**不动任何统计量、不动特征栈、不动四个阈值**，因此 Summary 表与阈值标定都不受影响。
 
@@ -173,16 +178,49 @@ Wuhan_2025_0607  最新年度
 | 1 节 | `POINTS_PER_CLASS`（原 200）、`SAMPLE_SELECTORS`（原 18 列） |
 | 4.13 | 配额 `nFloodC` / `nNonFloodC`、`stratifiedSample({classBand:'label' … seed: SAMPLE_SEED})`、`.map` 打事件属性、`nSamples = samples.size().getInfo()` |
 | 4.13 print | 「样本 N 条」一段 |
-| 4.14 | `summary.sample_count` / `summary.status` 不再由样本数决定（固定为 `null` / `'OK'`；列仍保留在 `SUMMARY_SELECTORS` 里以免与旧表串列） |
+| 4.14 | `summary.sample_count` / `summary.status` 不再由样本数决定（当时固定为 `null` / `'OK'`；这两个字段连同整个 4.14 已在【改动38】删除） |
 | 4.16 | return 对象的 `samples` 键 |
 | 5 节 | `allSamples` 合并、`allSamples.size()`、两条 `aggregate_histogram`、print 里的「有样本的时段」（改为「跳过（无 S1）的时段」） |
 | 7 节 | `EXPORT_ALL`、`EXPORT_PER_EVENT` 两个开关及其两块导出 |
 
-**保留的内容**：`SAMPLE_SCALE`(100 m，统计尺度)、`SAMPLE_SEED`（判读点抽样仍在用）、`EXPORT_SUMMARY` 开关、`counts` 与 4.12/4.14/4.15 全部统计、4.10b 分层带与 `stratumHist`、4.11 特征栈、`reviewImage`、第二部分整段。
+**保留的内容**：`SAMPLE_SCALE`(100 m，统计尺度)、`SAMPLE_SEED`（判读点抽样仍在用）、4.10b 分层带与 `stratumHist`、4.11 特征栈、`reviewImage`、`counts` 与 4.12/4.14/4.15 统计（这三段在【改动38】又被整体删除，见 3.7）、第二部分整段。
 
 **对判读零影响**：判读点走的是 `buildReviewPoints()`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE = 10 m`、`seed = SAMPLE_SEED`），与 4.13 的样本链互不引用——`samples` 在删除前除导出与 print 外无任何消费者。判读点的数量、位置、顺序与随机性都不变。
 
-**注意**：`sample_count` 列从此恒为 `null`。若日后要把 `EXPORT_SUMMARY` 打开并与 `csvdata/pseudo_labels/Wuhan_2016_2025_Flood_Event_Summary11.csv` 对齐，该列是真值缺失，不要当成 0 参与统计。
+**注意**：当时 `summary.sample_count` 列恒为 `null`（【改动38】后该列已不存在）。若与 `csvdata/pseudo_labels/Wuhan_2016_2025_Flood_Event_Summary11.csv` 对比，该列是真值缺失，不要当成 0 参与统计。
+
+### 3.7 【改动38】移除汇总表链（本文件不再产出任何汇总 CSV）
+
+**为什么删**：【改动37】之后，本文件剩下的产物只有两样——判读结果 CSV，和 `buildEvent` 里那条逐场汇总表链。后者是第一阶段 `validation_points.js` 的遗留：`SUMMARY_SELECTORS` 41 列 + `summaryBase()` + 4.12 `counts` + 4.14 汇总行 + 4.15 S2 质控 + `summaryFC` + `EXPORT_SUMMARY`。判读台一个字段都不读，却每场都要付代价：
+
+1. 4.12 `countImage`(8 波段) 的 `reduceRegion` + `getInfo()`：一次全幅像元计数往返；
+2. 4.14 `nFloodAt(-3.5)` / `nFloodAt(-4.5)` 两次全幅 `sum`、`s1_valid_cover` 一次全幅 `mean`、两次 `pixelArea` 全幅 `sum`；
+3. 4.16 之前的 `print('每时段汇总表:', summaryFC)` 一句就会把整条链拉起来求值——Console 里看不到汇总表，代价却照付。
+
+**删掉的内容**（`validation_review.js`）：
+
+| 位置 | 内容 |
+| --- | --- |
+| 1 节 | `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` 三个质控阈值、`SUMMARY_SELECTORS` 41 列 |
+| 4.12 | `countImage`(8 波段) + `counts` 的 `reduceRegion().getInfo()` + 两条像元数 print |
+| 4.14 | `sensCommon`（原定义处）、`nFloodAt(thr)`、`summary` 全字段赋值（7 列 counts、`s1_valid_cover`、`debias_mode`、`vv_offset_db` / `vh_offset_db`、`offset_spread_db`、`n_flood_at_m35` / `m45` / `flood_sens_ratio`、`flood_area_km2` / `valid_area_km2`、`sample_count` / `status`） |
+| 4.15 | S2 光学覆盖质控（`n_valid_px` / `s2_cover_valid_frac` / `high_flood_share` / `s2_qc_flag`）与 `NO_OPTICAL` 警告 print |
+| 4.16 前的 `summaryBase()` | 41 列基础字段构造器及它的两个调用点（跳过分支、4.14） |
+| 4.16 | return 对象的 `summary` 键；跳过分支简化为 `{name, skipped:true}` |
+| 5 节 | `summaryFC` 构造与 `print('每时段汇总表:', summaryFC)` |
+| 7 节 | `EXPORT_SUMMARY` 开关与其导出 |
+
+**保留的内容与理由**：
+
+- `sensCommon` 本身保留，但定义迁到 4.16 `if (DIAG)` 分支内（`s1Valid.and(lowSlope).and(nonPermanentWater).and(opticalFlood.or(s2Valid.not()))`）——它是 DIAG 五档阈值敏感性分析唯一剩下的消费者；
+- `lowSlope` / `nonPermanentWater` / `opticalFlood` / `s2Valid` / `floodUsed` / `nonFloodUsed` / `highFlood01` / `mediumFlood01` / `highNonFlood01` / `mediumNonFlood01` 全部保留——它们是 `label`、`conf_*`、`stratum` 的上游，判读链依赖；
+- `s1preCol` / `s2srCol` / `s2l1cCol`、`avail`、`s2Source` 全部保留——既喂真影像合成，也喂数据可用性检查与跳过判定。
+
+**对判读零影响**：判读点走 `r.reviewImage`（4.11 特征栈 + `stratum` + 新旧标签 + 4 个阈值输入），`stratumHist` 走 4.10b，都与 4.12/4.14/4.15 无引用关系。判读点的数量、位置、顺序与随机性不变；`REVIEW_SELECTORS` 27 列一个不少。
+
+**副作用**：Console 不再打印每场「洪涝 N 像元 / 非洪涝 N 像元」，也不再打印逐景偏移与 S2 质控摘要——这些量要么看主脚本 `code/pseudo_labels1.js` 的 Summary 表，要么把 `DIAG` 打开看诊断输出。另：4.5b 的 `s2_valid_px` 同口径说明、4.4 的 `vv_offset_db` / `vh_offset_db` 记录说明、`S2_INDEX_STAT` 的 `s2_index_stat` 口径记录说明，都已在注释里标注「随汇总表移除」。
+
+**边界**：本文件不再有任何 `Export`。以后要汇总表就在主脚本里跑，不要在判读台里恢复这条链——它每场多付 5～6 次全幅 reduce 往返，而判读本身不需要这些数。
 
 ---
 
@@ -212,7 +250,7 @@ Wuhan_2025_0607  最新年度
 | `DEBIAS_MODE` | `'perImage'` | 逐景扣各自相对前窗基线的偏移 |
 | `S2_CLOUD_MASK` | `'QA60'` | 云掩膜口径（另一档 `'SCL_AND_QA60'`，L1C 自动退回 QA60） |
 | `S1_FILL_DB` | −50 | GRD 切片填充值阈值，必须显式掩掉 |
-| `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` | 0.5 / 0.3 / 0.05 | S2 覆盖质控三档（`s2_qc_flag`） |
+| `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` | — | **【改动38】已删除**（原为 S2 覆盖质控三档，唯一用途是写 `s2_qc_flag`） |
 | `DIAG` | `false` | 诊断开关（逐景偏移、阈值敏感性、目视图层） |
 | `S2_TAIL_DIAG` | `true` | 相邻暴雨 S2 后窗越界尾段诊断（命中才打印） |
 
@@ -220,7 +258,7 @@ Wuhan_2025_0607  最新年度
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
-| `SAMPLE_SCALE` | 100 m | **统计尺度**（计数列、面积、去偏/稳定区中值）；【改动35】起**不再用于抽样点位** |
+| `SAMPLE_SCALE` | 100 m | **统计尺度**（去偏/稳定区中值、DIAG 诊断的像元量）；【改动35】起不再用于抽样点位，【改动38】后不再产出计数列与面积 |
 | `REVIEW_SAMPLE_SCALE` | 10 m | **【改动35】判读点抽样尺度**（= 判读尺度）：只作用于 7.1 的判读点抽样与 4.10b 的分层像元直方图，令采样尺度与判读员所看的原生 10 m 影像一致；不动任何统计量 |
 | `SAMPLE_SEED` | 20260927 | 抽样随机种子；【改动37】起只用于判读点抽样（7.1） |
 | `POINTS_PER_CLASS` | — | **【改动37】已删除**（原为训练样本每类上限 200） |
@@ -288,7 +326,7 @@ Wuhan_2025_0607  最新年度
 ## 7. 与 `validation_points.js` 的 5 处差异
 
 1. 顶部加本说明（第一阶段脚本没有）；
-2. 【改动37】样本 CSV 的导出与整条训练样本点链已移除，只剩汇总表开关 `EXPORT_SUMMARY`（当前 `false`）；改前是三个开关全 `false`；
+2. 【改动37】样本 CSV 的导出与整条训练样本点链已移除；【改动38】汇总表链（`counts` / 4.14 / 4.15 / `summaryFC` / `EXPORT_SUMMARY`）也移除，本文件**已无任何 `Export`**，唯一出口是判读结果 CSV 按钮；改前是三个开关全 `false`；
 3. 去掉旧的「显示」块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 4. `buildEvent` 返回值多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；【改动34】又增加了 `reviewImage` / `stratum` / `stratumHist` / `roi`；
 5. 【改动34】同步 4 个新阈值与 6 项 `sarFlood`；新增分层带与新/旧标签；判读点改从 `reviewImage` 上按层抽样；按事件留出 `tune` / `valid`。
@@ -303,7 +341,7 @@ Wuhan_2025_0607  最新年度
 | --- | --- | --- |
 | 必须 | 本版本**未在 GEE 实跑** | 只做了静态检查（`node --check`）；改动涉及阈值口径，必须在 Code Editor Run 并核对 Console 的分层像元数 |
 | 必须 | `validation_accuracy_report.py` 处理 `new_label = -1` | 目前会静默丢点，必须单列统计 |
-| 必须 | `flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45` 仍是旧候选规则 | 更新前不能作为新阈值的稳定性依据 |
+| 必须 | ~~`flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45`~~ | **【改动38】这三个字段已随汇总表链删除**（它们原本就还是旧候选规则，未随【改动34】更新）；新阈值的稳定性请用判读结果按层统计，不要再用这三个数 |
 | 注意 | 判读点的开销 | 当前跑三场，判读点上限 3 × 140 = 420 个（实际更少，受各层像元数限制）；每场多一次频率直方图请求。若扩到全量 18 场则最多 2520 点，判不完就按事件分批 |
 | 注意 | 某层点数不足的报错 | 若 `stratifiedSample` 报该层点数不够，把 `REVIEW_POINTS_PER_STRATUM` 对应层上限调低 |
 | 注意 | 4 个阈值是未标定初值 | 本轮就是为标定它们；标定后要同步回 `code/pseudo_labels1.js` 并重跑得到 `Summary12` |
@@ -319,3 +357,4 @@ Wuhan_2025_0607  最新年度
 | 2026-09-29 晚 | 【改动34】同步 Sentinel-1 预/后向散射约束；新增分层带与新旧标签；判读点改五层分层抽样；面板与导出增补；事件按 `tune` / `valid` 留出 |
 | 2026-09-30 | 【改动35】判读点抽样尺度与统计尺度分离：新增 `REVIEW_SAMPLE_SCALE = 10 m`，判读点抽样（7.1）与分层像元计数（4.10b）从 `SAMPLE_SCALE`(100 m) 改到它；统计尺度仍为 100 m。本文档 2 节结构表、3.3 节与 4.3 节同步更新 |
 | 2026-09-30 | 【改动37】本文件定位收敛为「只做目视判读精度评价」：移除 4.13 训练样本点链（样本抽样 + `samples.size()` + `allSamples` 合并 + 样本 print）、`POINTS_PER_CLASS` 与 `SAMPLE_SELECTORS`、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出；`summary.sample_count` 固定为 `null`、`status` 固定为 `'OK'`。判读点链（5 层 / 10 m）不受影响。本文档 2 节结构表、4.3 节与新增 3.6 节同步更新 |
+| 2026-09-30 | 【改动38】进一步移除汇总表链：4.12 `countImage` / `counts`、4.14 汇总行（`sensCommon` / `nFloodAt` / `summary` 全字段）、4.15 S2 质控、`summaryBase()` 与 `SUMMARY_SELECTORS`、`summaryFC` 与 `EXPORT_SUMMARY`、三个 S2 质控阈值。`sensCommon` 迁入 4.16 `DIAG` 分支；本文件此后无任何 `Export`，唯一出口是判读结果 CSV。判读点链（5 层 / 10 m）不受影响。本文档 2 节结构表、3.7 节（新增）与 4.2 / 4.3 / 7 / 8 节同步更新 |
