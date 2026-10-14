@@ -18,7 +18,14 @@ var PERMANENT_WATER_TH = 90;   // JRC occurrence 永久水体阈值（%）
 var S2_MAX_CLOUD = 90;         // S2 整景云量上限（%）
 
 // ---- 抽样参数 ----
-var SAMPLE_SCALE = 100;         // 抽样与统计尺度（m）
+var SAMPLE_SCALE = 100;         // 统计尺度（m）：计数、面积、去偏/稳定区中值都用它
+// 【改动36】抽样点位尺度与统计尺度分离
+//   SAMPLE_SCALE(100 m) 保留给统计量（reduceRegion 的计数、面积、偏移中值、稳定区中值），
+//   它算出来的数就是 Summary 表的列值，不能动。
+//   样本点要回答的是"这个点是不是新增水体"—— 判定/取值尺度应当等于判读尺度（原生 10 m），
+//   用 100 m 格取值会把水/非水的混合像元平均掉，导致样本取值与目视判读看到的不同一块地。
+//   因此只把 4.13 的 stratifiedSample 换成下面这个常量；统计量、特征栈、四个阈值全部不变。
+var SAMPLE_POINT_SCALE = 10;    // 抽样点位尺度（m）：只作用于 4.13 的 stratifiedSample
 var POINTS_PER_CLASS = 2000;   // 每类最多抽样点数（实际取 min(该值, 该类像元数)）
 var SAMPLE_SEED = 42;          // 抽样随机种子
 
@@ -1143,7 +1150,7 @@ function buildEvent(ev) {
       numPoints: nFloodC + nNonFloodC,
       classBand: 'label',
       region: roi,
-      scale: SAMPLE_SCALE,
+      scale: SAMPLE_POINT_SCALE,
       classValues: [0, 1],
       classPoints: [nNonFloodC, nFloodC],
       geometries: true,
@@ -1172,7 +1179,8 @@ function buildEvent(ev) {
   print('像元统计(scale=' + SAMPLE_SCALE + 'm):', counts);
   print('该时段结果: 洪涝 ' + (counts.n_flood || 0)
     + ' 像元 / 非洪涝 ' + (counts.n_nonflood || 0)
-    + ' 像元 / 样本 ' + nSamples + ' 条 | S2 有效像元 '
+    + ' 像元 / 样本 ' + nSamples + ' 条（抽样尺度 '
+    + SAMPLE_POINT_SCALE + 'm）| S2 有效像元 '
     + (counts.n_s2valid || 0));
 
   // 【改动22】QC 指标的两个量（都写进汇总表，19 个事件导出来一张表就能横向比）

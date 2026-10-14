@@ -10,6 +10,7 @@
 > 2026-09-24 增补（下午）：**【改动32】S2 云掩膜口径开关**（`QA60` / `QA60 ∧ SCL`）与**【改动33】"零暴雨"对照事件**（`isControl`，默认不进全量）——用于给 `2022_0627` / `2023_0618` 的"残云 / 季节性明水"问题定案（首轮目视复核未通过）。见第 5 节末。
 > 2026-09-24 增补（晚）：**全量重跑的新 `Summary10.csv`**（18 事件、`2025_0522` 已带 `s2PostEnd` 截断）——验收全部命中（15 天 / 32 景 / 覆盖 86.0% / 面积 28.926 km²），17 场未改动事件与 `Summary9` 逐字段一致；同名的旧文件已删除。见第 5 节末。
 > 2026-09-29 增补：**【改动34】Sentinel-1 IW GRD 预/后向散射初值约束**——`sarFlood01` 增加事件前非水、事件后为水条件，用于排除事件前已有水体；新增参数见第 4 节，规则说明见第 5 节末。
+> 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE = 10`，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。
 
 ---
 
@@ -39,7 +40,7 @@
 | `code/temp1.3.js` | 存档 | 新增【改动18】`dropFill` 公共化、【改动19】全局去偏、【改动20】覆盖率/偏移进 summary；修正导出 `selectors` 写反 |
 | `code/temp1.4.js` | 存档 | 新增【改动21】`DEBIAS_MODE` 三档 + 逐景去偏 `debiasOne` |
 | `code/temp1.5.js` | 存档 | 新增【改动22】`DIAG` 开关 + QC 指标进 summary、【改动23】两个面积列（km²）、perImage 残差归零、全量运行配置；修复「影像算术丢属性」报错 |
-| **`code/pseudo_labels1.js`** | **当前主版本** | 由 `temp1.5.js` 复制后改造。【改动24】S1/S2 后窗口拆分、窗口字段与 summary 列同步拆开；**【改动25】**S2 窗口定为 18 天 + 光学指数改"逐景算指数取 max"（`S2_INDEX_STAT`）+ 新增 `s2_index_stat` 列；**【改动26】**`S2_Valid` 与统计量解耦；**【改动27】**S2 光学覆盖自动质检（`s2_qc_flag` 等 4 列）；**【改动28】**合并 2024 两场（事件数 19 → 18）；**【改动29】**相邻暴雨 S2 后窗越界自检；**【改动30】**事件表可强制指定 S2 源（`2017_0824` → L1C）；**【改动31】**越界尾段晴空贡献诊断 + `RUN_EVENT_NAMES` 默认改回 `null`（全量 18 事件）；**【改动32】**S2 云掩膜口径开关（`QA60` / `QA60 ∧ SCL`）；**【改动33】**"零暴雨"对照事件（`isControl`，默认不进全量）。**注：改动32/33 尚未 git 提交** |
+| **`code/pseudo_labels1.js`** | **当前主版本** | 由 `temp1.5.js` 复制后改造。【改动24】S1/S2 后窗口拆分、窗口字段与 summary 列同步拆开；**【改动25】**S2 窗口定为 18 天 + 光学指数改"逐景算指数取 max"（`S2_INDEX_STAT`）+ 新增 `s2_index_stat` 列；**【改动26】**`S2_Valid` 与统计量解耦；**【改动27】**S2 光学覆盖自动质检（`s2_qc_flag` 等 4 列）；**【改动28】**合并 2024 两场（事件数 19 → 18）；**【改动29】**相邻暴雨 S2 后窗越界自检；**【改动30】**事件表可强制指定 S2 源（`2017_0824` → L1C）；**【改动31】**越界尾段晴空贡献诊断 + `RUN_EVENT_NAMES` 默认改回 `null`（全量 18 事件）；**【改动32】**S2 云掩膜口径开关（`QA60` / `QA60 ∧ SCL`）；**【改动33】**"零暴雨"对照事件（`isControl`，默认不进全量）；**【改动34】**S1 预/后向散射初值约束；**【改动36】**抽样点位尺度与统计尺度分离（新增 `SAMPLE_POINT_SCALE = 10`，只改 4.13 的 `stratifiedSample`，统计仍 100 m）。**注：改动32/33 尚未 git 提交** |
 | `code/rivision.md` | 修改依据 | 「Sentinel-1 与 Sentinel-2 后时相窗口分离」修改建议（改动24 的来源） |
 | `code/temp_version_notes.md` | 本文档 | 版本与诊断说明 |
 | `code/events.js`、`code/flood_pseudolabel.js` | 搁置 | 模块化方案（`require('users/<user>/<folder>:<script>')`），因 `Module not found` 未启用 |
@@ -99,7 +100,8 @@
 | `VV_POST_WATER_TH` | −16 dB | **【改动34】** 事件后 VV 低于此值才视为水体 |
 | `VH_POST_WATER_TH` | −22 dB | **【改动34】** 事件后 VH 低于此值才视为水体 |
 | `S2_MAX_CLOUD` | 90% | S2 整景云量上限 |
-| `SAMPLE_SCALE` | 100 m | 抽样与统计尺度 |
+| `SAMPLE_SCALE` | 100 m | **统计尺度**：计数列、面积、去偏/稳定区中值（**【改动36】起不再用于抽样点位**） |
+| `SAMPLE_POINT_SCALE` | 10 m | **【改动36】抽样点位尺度**：只作用于 4.13 的 `stratifiedSample`（`scale` 参数），令样本取值尺度 = 目视判读尺度。统计量、特征栈、四个 SAR 阈值均不受影响 |
 | `POINTS_PER_CLASS` | 2000 | 每类最多抽样点数 |
 | `SAMPLE_SEED` | 42 | 抽样随机种子 |
 | `PRE_WINDOW_DAYS` / `PRE_GAP_DAYS` | 24 / 5 天 | 前窗长度 / 前窗与事件间隔 |
@@ -529,6 +531,59 @@ vh_post_c < -22
 **影响与待办**：会减少“事件前已有水体”的误报，但可能漏掉原有水体的洪水扩张区；上述阈值只是 IW GRD 参考初值，下一步用人工判读点做 ROC / F1 或直方图、分位数标定，并按升/降轨、入射角和地物类型分层调整。
 
 **静态校验**：`node --check` 通过。
+
+---
+
+### pseudo_labels1.js【改动36】：抽样点位尺度与统计尺度分离（样本点改用 10 m）
+
+**触发（2026-09-30）**：`SAMPLE_SCALE = 100` 同时充当两个角色——(a) 统计尺度（`reduceRegion` 的计数、面积、去偏/稳定区中值），(b) 抽样点位尺度（4.13 的 `stratifiedSample`）。统计部分必须留在 100 m（Summary 各列都建立在它上面，动了就无法与 `Summary9`/`Summary10` 对照）；但样本点要回答"这个点是不是新增水体"，取值尺度应与判读尺度一致。判读员看的是原生 10 m 影像，若样本点取 100 m 格内的聚合值，双方测的不是同一块地——水体边界处的混合像元会被平均，采样结论与目视判读系统性错位。这与 `code_accuraccy/validation_review.js`【改动35】同源（那里把判读点从 100 m 改到 10 m）。
+
+**改动（共 2 处，均在 `code/pseudo_labels1.js`）**：
+
+1. 参数区（原 :21 之后）新增常量，并把 `SAMPLE_SCALE` 的注释改写为"统计尺度"：
+
+```javascript
+var SAMPLE_SCALE = 100;         // 统计尺度（m）：计数、面积、去偏/稳定区中值都用它
+var SAMPLE_POINT_SCALE = 10;    // 抽样点位尺度（m）：只作用于 4.13 的 stratifiedSample
+```
+
+2. 4.13 的 `stratifiedSample` 调用（原 :1146）只改 `scale`：
+
+```javascript
+scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
+```
+
+`numPoints` / `classBand` / `region` / `classValues` / `classPoints` / `geometries` / `seed` / `tileScale` 全部不变。
+另外 `print('该时段结果: ...')` 增补一句抽样尺度，便于 Console 直接看出本批样本是哪个尺度。
+
+**为什么不用"把 `SAMPLE_SCALE` 改成 10、其余 16 处回填 100"**：`SAMPLE_SCALE` 在文件内共 17 处引用（1 处定义 + 16 处使用），其中只有 1 处是抽样点位、其余 15 处是统计量、1 处（:1172）是打印文字；逐处回填改动面大且易漏，还会让"统计尺度"这个语义在名字上消失。新增独立常量是最小改动。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 样本点位置与 10 个特征列取值 | **变**（100 m 格内聚合值 → 10 m 单像元值，值域与离散度变宽） |
+| 样本点的 `label` / `conf_flood` / `conf_nonflood` | **变**（水体边界混合像元不再被平均） |
+| 样本数（`nFloodC` / `nNonFloodC` / `sample_count`） | 不变，仍由 4.13 的 `min(POINTS_PER_CLASS, counts.n_flood)` 决定，而 `counts` 出自 100 m 的 `reduceRegion` |
+| Summary 表全部列（`n_flood_px`、`flood_area_km2`、`n_flood_at_m35`、`s2_cover_valid_frac`、`s2_qc_flag` …） | 不变，仍算在 100 m 上 |
+| 像素级 `label` 影像、`sarFlood`、`sarStable01`、四个 SAR 阈值 | 不变 |
+
+即：**只有训练/验证样本 CSV 的点位与取值改变，标签生成规则、面积统计、阈值敏感性全部冻结。**
+
+**风险与待办**：
+
+- **计算量约 ×100**：`stratifiedSample` 在 `region: roi`（武汉全域）上按 10 m 扫描，待选单元从 ~86 万涨到 ~8,600 万，可能触发 GEE 的 computation/memory 限制或超时。缓解顺序：① `tileScale` 4 → 8（`tileScale` 是并行分块参数，不是尺度参数）；② 用 `RUN_EVENT_NAMES` 点名单场分批判读。
+- **新旧样本 CSV 不可混用**：`csvdata/pseudo_labels/*.csv` 现有文件是 100 m 口径，改后重跑的样本须整体替换，不得与前一批混合训练或合并统计。
+- **口径记录**：应在导出的 Summary / 样本文件名或附注里标明抽样尺度（当前文件名不含尺度信息）。
+
+**静态校验**：未在 GEE 实跑（AI 无法执行 GEE 脚本），仅静态检查；须在 Code Editor 里按下面的验收步骤跑通并核对。
+
+**验收步骤**：
+
+1. `RUN_EVENT_NAMES = ['Wuhan_2020_0705']` 单场跑通，确认无报错；
+2. Console 里 `print('像元统计(scale=100m)')` 的 `n_flood` / `n_nonflood` 与改前一致（证明统计尺度未被带动），`sample_count` 也一致；
+3. 导出单场 CSV，检查 `VV_diff` 等特征列的离散度明显变宽，抽查若干点的 `label` 与 10 m 原生影像是否吻合；
+4. 全量 18 场重跑，`Wuhan_2016_2025_Flood_Event_Summary` 与 `Summary10` 逐列比对，应完全相同。
 
 ---
 
