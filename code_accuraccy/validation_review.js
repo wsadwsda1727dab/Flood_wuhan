@@ -8,9 +8,10 @@
 // validation_points.js 导出的 CSV 一一对应。引入【改动34】后这条对应关系被有意打破：
 // 本文件同步了 Sentinel-1 预/后向散射约束，并把判读点改成按 5 层分层抽样
 // （含"版本差异层"——约束前判洪、约束后被删的像元，这类点在训练样本里根本不存在）。
-// 与 validation_points.js 的差异（文件内均以「【第二阶段】」「【改动34】」标注）：
+// 与 validation_points.js 的差异（文件内均以「【第二阶段】」「【改动34】」「【改动37】」标注）：
 //   1) 顶部加本说明；
-//   2) 关闭伪标签样本 CSV 导出（EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY）；
+//   2)【改动37】已移除训练/验证样本点链（样本抽样 + EXPORT_ALL / EXPORT_PER_EVENT 两个导出），
+//      只留汇总表导出开关 EXPORT_SUMMARY（当前也是 false）；
 //   3) 去掉旧的"显示"块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 //   4) buildEvent 返回值里多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；
 //   5)【改动34】同步 4 个新阈值 + 新增判读分层带（stratum）/ 新旧标签（new_label、
@@ -51,9 +52,19 @@ var PERMANENT_WATER_TH = 90;   // JRC occurrence 永久水体阈值（%）
 var S2_MAX_CLOUD = 90;         // S2 整景云量上限（%）
 
 // ---- 抽样参数 ----
-var SAMPLE_SCALE = 100;         // 抽样与统计尺度（m）
-var POINTS_PER_CLASS = 200;   // 每类最多抽样点数（实际取 min(该值, 该类像元数)）
-var SAMPLE_SEED = 20260927;          // 抽样随机种子
+var SAMPLE_SCALE = 100;         // 统计尺度（m）：计数列、面积、稳定区中值都用它
+// 【改动37】原 POINTS_PER_CLASS（训练样本每类上限）已随样本点链一并移除。
+var SAMPLE_SEED = 20260927;          // 抽样随机种子（【改动37】起只用于判读点抽样）
+
+// ---- 【改动35】判读点抽样尺度（只作用于第二部分目视判读）----
+//   为什么要单独一个常量：SAMPLE_SCALE = 100 m 是**统计**尺度（Summary 的计数列、面积、
+//   稳定区中值都建立在它上面），而判读点要回答的是"眼前这个像元是不是新增水体"——
+//   判定尺度就是判读尺度，两者必须一致。判读员看的是原生 10 m 影像，若还用 100 m 格的
+//   取值去比对，双方测的根本不是同一块地（100 m 格在武汉纬度上东西向只有 ~86 m，
+//   一个格子里装的是上百个 10 m 像元的均值或多数类）。
+//   本常量只用于第二部分的判读点抽样（7.1）与它的分层像元计数（4.10b）：
+//   不动任何统计量、不动特征栈、不动四个阈值，因此 Summary 表与阈值标定都不受影响。
+var REVIEW_SAMPLE_SCALE = 10;   // 判读点抽样尺度（m）：= 判读尺度
 
 // ---- 正负样本口径 ----
 var USE_MEDIUM_AS_FLOOD = true;      // Medium Flood（无 S2 的 SAR 洪水）是否作为正样本
@@ -153,13 +164,8 @@ var S2_CLOUD_MASK = 'QA60';
 // 文档里的事件时间是北京时间，GEE 的 filterDate 按 UTC 处理，这里统一换算。
 var TZ_OFFSET_HOURS = 8;
 
-// 样本 CSV 的列（顺序即导出后的列顺序）
-var SAMPLE_SELECTORS = [
-  'event_id', 'year', 'storm_start_bj', 'storm_end_bj', 'area',
-  'label', 'conf_flood', 'conf_nonflood',
-  'VV', 'VH', 'VV_diff', 'VH_diff', 'VV_ratio',
-  'NDVI', 'MNDWI', 'DEM', 'slope', 'S2_Valid'
-];
+// 汇总 CSV 的列（顺序即导出后的列顺序）
+// 【改动37】原 SAMPLE_SELECTORS（样本 CSV 列）已随样本点链一并移除。
 var SUMMARY_SELECTORS = [
   'event_id', 'year', 'storm_start_bj', 'storm_end_bj',
   'pre_window_utc', 'post_window_utc', 'pre_days', 'post_days',
@@ -829,8 +835,7 @@ function buildEvent(ev) {
     return {
       name: ev.name,
       skipped: true,
-      summary: summaryBase(ev, w, avail, s2Source),
-      samples: ee.FeatureCollection([])
+      summary: summaryBase(ev, w, avail, s2Source)
     };
   }
 
@@ -1203,11 +1208,15 @@ function buildEvent(ev) {
   var oldLabelBand = newLabelBand.where(oldFloodUsed, 1).rename('old_label');
   var oldSarFloodBand = oldSarFlood01.toInt().rename('old_sar_flood');
 
-  // 各层像元数（在 SAMPLE_SCALE 网格上数像元）：判读抽样按"每层实际像元数"取 min，
-  //   像元少的层不会被硬抽。频率直方图只发一次请求，正式判读时在 console 打印备查。
+  // 各层像元数（在判读抽样尺度 REVIEW_SAMPLE_SCALE 上数像元，与 7.1 的抽样尺度一致）：
+  //   判读抽样按"每层实际像元数"取 min，像元少的层不会被硬抽。频率直方图只发一次请求，
+  //   正式判读时在 console 打印备查。
+  //   【改动35】这里从 SAMPLE_SCALE(100 m) 改为 REVIEW_SAMPLE_SCALE(10 m)：直方图的计数
+  //   单位必须与抽样单位相同，否则 min() 拿到的是"100 m 格数"，会把像元少的层压到上限以下
+  //   （例如某层 10 m 有 1800 个像元、落到 100 m 只剩 18 格，就只会抽 18 点而不是 20 点）。
   var stratumHist = stratum.reduceRegion({
     reducer: ee.Reducer.frequencyHistogram(), tileScale: 8, geometry: geom,
-    scale: SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
+    scale: REVIEW_SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
   });
   print('【改动34】' + ev.name + ' 判读分层像元数'
     + '（0=非洪涝 / 1=High洪涝 / 2=Medium洪涝 / 3=版本差异·前已是水 / 4=版本差异·后不够暗）:',
@@ -1275,48 +1284,22 @@ function buildEvent(ev) {
   }).getInfo() || {};
 
   // ----------------------------------------------------------
-  // 4.13某类像元不足时会硬抽，这里按各时段实际像元数动态取 min。
+  // 4.13【改动37】原训练/验证样本点抽样（stratifiedSample by label）已移除。
+  //   本文件只服务目视判读精度评价，判读点由第二部分的 buildReviewPoints() 按 5 层
+  //   单独抽（scale = REVIEW_SAMPLE_SCALE = 10 m），与这里的训练样本点是两条链：
+  //     - 训练样本点：classBand='label'（正负 2 类）、每类 POINTS_PER_CLASS 上限、
+  //                   scale = SAMPLE_SCALE（100 m）→ 只进样本 CSV，无人消费；
+  //     - 判读点  ：classBand='stratum'（5 层）、REVIEW_POINTS_PER_STRATUM 上限、
+  //                   scale = REVIEW_SAMPLE_SCALE（10 m）→ 判读面板与 reference CSV。
+  //   顺带消除一处口径隐患：原样本链是 100 m，而主脚本 code/pseudo_labels1.js
+  //   【改动36】后已改为 10 m，开关一旦打开就会静默导出错误尺度的样本。
+  //   同时省掉一次 samples.size() 阻塞往返（与 pseudo_labels1.js 全量跑报错同型）。
   // ----------------------------------------------------------
-  var nFloodC = Math.round(Math.min(POINTS_PER_CLASS, counts.n_flood || 0));
-  var nNonFloodC = Math.round(Math.min(POINTS_PER_CLASS, counts.n_nonflood || 0));
-
-  var samples = ee.FeatureCollection([]);
-  if (nFloodC > 0 && nNonFloodC > 0) {
-    samples = sampleImage.stratifiedSample({
-      numPoints: nFloodC + nNonFloodC,
-      classBand: 'label',
-      region: roi,
-      scale: SAMPLE_SCALE,
-      classValues: [0, 1],
-      classPoints: [nNonFloodC, nFloodC],
-      geometries: true,
-      seed: SAMPLE_SEED,
-      tileScale: 4
-    });
-  } else {
-    print('⚠ ' + ev.name + '：正/负样本像元不足（flood='
-      + nFloodC + ', nonflood=' + nNonFloodC + '），该时段跳过抽样。');
-  }
-
-  // 【改动11】样本属性：带上事件标识，便于按时间段/年份筛选与分层验证
-  //   （原 temp.js 的样本没有事件/时间字段，多时段混在一个表里分不清来源）
-  samples = samples.map(function (f) {
-    return f.set({
-      event_id: ev.name,
-      year: ev.year,
-      storm_start_bj: ev.start,
-      storm_end_bj: ev.end,
-      area: ev.area
-    });
-  });
-
-  var nSamples = ee.Number(samples.size()).getInfo();
 
   print('像元统计(scale=' + SAMPLE_SCALE + 'm):', counts);
   print('该时段结果: 洪涝 ' + (counts.n_flood || 0)
     + ' 像元 / 非洪涝 ' + (counts.n_nonflood || 0)
-    + ' 像元 / 样本 ' + nSamples + ' 条 | S2 有效像元 '
-    + (counts.n_s2valid || 0));
+    + ' 像元 | S2 有效像元 ' + (counts.n_s2valid || 0));
 
   // 【改动22】QC 指标的两个量（都写进汇总表，19 个事件导出来一张表就能横向比）
   //   sensCommon：除 SAR 阈值以外的其余标签条件（与最终洪涝标签同一套，忽略 High/Medium 之分）
@@ -1373,8 +1356,8 @@ function buildEvent(ev) {
     .multiply(ee.Image.pixelArea()).divide(1e6)
     .reduceRegion({reducer: ee.Reducer.sum(), geometry: geom, scale: SAMPLE_SCALE,
       bestEffort: true, maxPixels: 1e10}).values().get(0);
-  summary.sample_count = nSamples;
-  summary.status = (nSamples > 0) ? 'OK' : 'NO_SAMPLE';
+  summary.sample_count = null;   // 【改动37】样本点链已移除，此列不再有值（列保留以免与旧表串列）
+  summary.status = 'OK';
 
   // ----------------------------------------------------------
   // 4.15【改动27】S2 光学覆盖质控（每场自动标记，不再靠人工比对）
@@ -1474,7 +1457,6 @@ function buildEvent(ev) {
     name: ev.name,
     skipped: false,
     summary: summary,
-    samples: samples,
     // 【改动34】判读台专用：分层抽样影像、分层带、分层像元数、本事件 ROI
     reviewImage: reviewImage,
     stratum: stratum,
@@ -1579,27 +1561,16 @@ if (RUN_EVENT_NAMES !== null) {
 
 var results = EVENTS_TO_RUN.map(buildEvent);
 
-// 合并所有时段的样本
-var allSamples = ee.FeatureCollection([]);
-results.forEach(function (r) {
-  if (!r.skipped) {
-    allSamples = allSamples.merge(r.samples);
-  }
-});
-
-// 【改动12】每时段汇总表（降雨量 + 数据可用性 + 像元数 + 样本数）
+// 【改动12】每时段汇总表（降雨量 + 数据可用性 + 像元数）
 var summaryFC = ee.FeatureCollection(results.map(function (r) {
   return ee.Feature(null, r.summary);
 }));
 
 print('========================================');
 print('完成时段数: ' + results.length
-  + ' | 其中有样本的时段: ' + results.filter(function (r) {
-    return !r.skipped && r.summary.sample_count > 0;
+  + ' | 其中跳过（无 S1）的时段: ' + results.filter(function (r) {
+    return r.skipped;
   }).length);
-print('所有时段合并样本总数:', allSamples.size());
-print('按事件统计样本数:', allSamples.aggregate_histogram('event_id'));
-print('按标签统计样本数:', allSamples.aggregate_histogram('label'));
 print('每时段汇总表:', summaryFC);
 
 
@@ -1608,19 +1579,9 @@ print('每时段汇总表:', summaryFC);
 //    判读阶段的图层统一交给文件末尾的判读台 renderEventLayers()。
 
 // 7.【改动13】导出
-//   这里改为：每个时段一条单独 CSV + 1 条合并 CSV + 1 条每时段汇总表 CSV。
-var EXPORT_ALL = false;          // 【第二阶段】判读脚本不再导出伪标签样本表         // 所有时段合并成一份 CSV（含 event_id / year）
-var EXPORT_PER_EVENT = false;   // 【第二阶段】   // 每个时段单独一份 CSV（按时间段取数据用这个）
-var EXPORT_SUMMARY = false;     // 【第二阶段】     // 每时段汇总表（降雨量 + 像元数 + 样本数）
-
-if (EXPORT_ALL) {
-  Export.table.toDrive({
-    collection: allSamples,
-    description: 'Wuhan_2016_2025_Flood_PseudoLabel_All',
-    fileFormat: 'CSV',
-    selectors: SAMPLE_SELECTORS
-  });
-}
+//   【改动37】只保留每时段汇总表一条导出；样本 CSV 的两条导出（EXPORT_ALL /
+//   EXPORT_PER_EVENT）与它们的 selectors 已随训练样本点链一并移除。
+var EXPORT_SUMMARY = false;     // 【第二阶段】     // 每时段汇总表（降雨量 + 像元数）
 
 if (EXPORT_SUMMARY) {
   Export.table.toDrive({
@@ -1631,20 +1592,7 @@ if (EXPORT_SUMMARY) {
   });
 }
 
-if (EXPORT_PER_EVENT) {
-  results.forEach(function (r) {
-    if (r.skipped || r.summary.sample_count === 0) {
-      print('跳过导出（该时段无可用样本）: ' + r.name);
-      return;
-    }
-    Export.table.toDrive({
-      collection: r.samples,
-      description: 'Flood_' + r.name,
-      fileFormat: 'CSV',
-      selectors: SAMPLE_SELECTORS
-    });
-  });
-}
+// 【改动37】原 EXPORT_PER_EVENT（每时段一份样本 CSV）已随训练样本点链移除。
 
 
 // ============================================================================
@@ -1655,7 +1603,8 @@ if (EXPORT_PER_EVENT) {
 // 为什么这么接：
 //   1) 点位来源：伪标签生成脚本导出的点 CSV 只有属性、没有几何（selectors 里没写
 //      '.geo'），拿回来无法落图；所以判读点位直接在内存里按层抽（geometries: true），
-//      用同一套 SAMPLE_SEED / SAMPLE_SCALE。
+//      用同一套 SAMPLE_SEED；【改动35】抽样尺度改用 REVIEW_SAMPLE_SCALE（10 m =
+//      判读尺度），不再用统计尺度 SAMPLE_SCALE。
 //      【改动34】抽法从"按 label 抽正负两类"改成"按 5 层分层抽"（见 7.1）：
 //      非洪涝 / High Flood / Medium Flood / 版本差异·前已是水 / 版本差异·后不够暗，
 //      每层上限见 REVIEW_POINTS_PER_STRATUM（像元不足时取实际数量）。
@@ -1768,7 +1717,10 @@ function buildReviewPoints(r) {
     numPoints: total,
     classBand: 'stratum',
     region: r.roi,
-    scale: SAMPLE_SCALE,
+    // 【改动35】判读点按 REVIEW_SAMPLE_SCALE(10 m) 抽：采样尺度 = 判读尺度。
+    //   用 SAMPLE_SCALE(100 m) 会把点位落到 100 m 格中心、取值也是格内的聚合值，
+    //   与判读员在原生 10 m 影像上目视的"这一点是不是水"错位（实测同一可差 5 dB 量级）。
+    scale: REVIEW_SAMPLE_SCALE,
     classValues: classValues,
     classPoints: classPoints,
     geometries: true,

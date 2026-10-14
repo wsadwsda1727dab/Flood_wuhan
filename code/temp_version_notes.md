@@ -11,6 +11,7 @@
 > 2026-09-24 增补（晚）：**全量重跑的新 `Summary10.csv`**（18 事件、`2025_0522` 已带 `s2PostEnd` 截断）——验收全部命中（15 天 / 32 景 / 覆盖 86.0% / 面积 28.926 km²），17 场未改动事件与 `Summary9` 逐字段一致；同名的旧文件已删除。见第 5 节末。
 > 2026-09-29 增补：**【改动34】Sentinel-1 IW GRD 预/后向散射初值约束**——`sarFlood01` 增加事件前非水、事件后为水条件，用于排除事件前已有水体；新增参数见第 4 节，规则说明见第 5 节末。
 > 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE = 10`，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。
+> 2026-09-30 增补：**【改动37】`validation_review.js` 定位收敛为「只做目视判读精度评价」**——移除 4.13 那条按 `label` 抽正负两类的训练样本点链（含 `POINTS_PER_CLASS`、`SAMPLE_SELECTORS`、`samples.size()` 阻塞调用、`allSamples` 合并、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出）。判读点链（5 层 / 10 m）不受影响；`summary.sample_count` 固定为 `null`。见第 5 节末。
 
 ---
 
@@ -584,6 +585,57 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 2. Console 里 `print('像元统计(scale=100m)')` 的 `n_flood` / `n_nonflood` 与改前一致（证明统计尺度未被带动），`sample_count` 也一致；
 3. 导出单场 CSV，检查 `VV_diff` 等特征列的离散度明显变宽，抽查若干点的 `label` 与 10 m 原生影像是否吻合；
 4. 全量 18 场重跑，`Wuhan_2016_2025_Flood_Event_Summary` 与 `Summary10` 逐列比对，应完全相同。
+
+---
+
+### validation_review.js【改动37】：移除训练样本点链（判读台只做目视判读）
+
+**触发（2026-09-30）**：`code_accuraccy/validation_review.js` 的定位已收敛为「只用于目视判读精度评价」。它由 `validation_points.js` 复制而来，`buildEvent` 4.13 仍保留着原脚本那条「按 `label` 抽正负两类训练样本点 → 导出样本 CSV」的链路，但这条链在判读台里无人消费：三个导出开关（`EXPORT_ALL` / `EXPORT_PER_EVENT` / `EXPORT_SUMMARY`）全为 `false`，第二部分（判读台）对 `r.samples` 零引用。留着有三项成本：
+
+1. 每场白跑一次 `scale = SAMPLE_SCALE`(100 m) × 每类 `POINTS_PER_CLASS`(200) 点的 `stratifiedSample`（武汉全域约 86 万待选单元）；
+2. `var nSamples = ee.Number(samples.size()).getInfo();` 是一次阻塞往返，与 `pseudo_labels1.js:1177` 全量跑报 `Failed to send on XMLHttpRequest` 的调用同型；后续 `allSamples.merge()` + `size()` + 2 个 `aggregate_histogram` 又是 3 次往返，纯为打印；
+3. **口径冲突**：主脚本【改动36】已把样本点改到 10 m，这里仍是 100 m，`EXPORT_PER_EVENT` 一翻 `true` 就会静默导出错误尺度的样本。
+
+**改动（共 8 处，均在 `code_accuraccy/validation_review.js`，另文档 3 处）**：
+
+| 位置（改后行号） | 改动 |
+|---|---|
+| `:56` | 删除 `var POINTS_PER_CLASS = 200;`，留注释；`SAMPLE_SEED` 注释改为"只用于判读点抽样" |
+| `:168` | 删除 `SAMPLE_SELECTORS`（18 列样本 CSV 列定义），留注释 |
+| `:838` | 跳过分支 return 去掉 `samples: ee.FeatureCollection([])` |
+| `:1287-1297` | 4.13 整段替换为【改动37】说明注释（删配额 `nFloodC`/`nNonFloodC`、`stratifiedSample`、`.map` 打事件属性、`nSamples` 阻塞调用） |
+| `:1300-1302` | `print('该时段结果: …')` 去掉「样本 N 条」，只留洪涝/非洪涝/S2 有效像元 |
+| `:1359-1360` | `summary.sample_count = null;`、`summary.status = 'OK';`（原由 `nSamples` 决定） |
+| `:1460` | return 对象去掉 `samples: samples` |
+| `:1565-1583`、`:1594-1595` | 删 `allSamples` 合并块与 3 条样本 print；print 的「有样本的时段」改为「跳过（无 S1）的时段」；删 `EXPORT_ALL` / `EXPORT_PER_EVENT` 两个开关及两块导出，只留 `EXPORT_SUMMARY` |
+
+**为什么判读不受影响**：判读点走的是第二部分的 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE = 10 m`、`seed = SAMPLE_SEED`），读的是 `r.reviewImage` / `r.stratum` / `r.stratumHist` / `r.roi`，与 4.13 的样本链互不引用。删除前后判读点的数量、位置、顺序、随机性完全一致。`SAMPLE_SCALE`(100 m 统计尺度) 与 `counts`（4.12）保留，Summary 各统计列不受影响。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| `counts`、4.12/4.14/4.15 全部统计列 | 不变 |
+| `stratum` / `stratumHist`（已按【改动35】用 10 m） | 不变 |
+| `summary.sample_count` | **变**：由「实际样本数」变为恒 `null`（列保留，避免与旧表串列） |
+| `summary.status` | **变**：正常时段由 `'OK'`/`'NO_SAMPLE'` 变为恒 `'OK'`；跳过时段仍为 `'SKIPPED_NO_S1'` |
+| 每场阻塞往返次数 | **减 1**（`samples.size()`），另减 `allSamples` 级联的 3 次 |
+| 样本 CSV 导出能力 | **移除**（`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个开关不复存在） |
+
+**风险与待办**：
+
+- `sample_count` 列从此恒为 `null`。若日后打开 `EXPORT_SUMMARY` 并与 `csvdata/pseudo_labels/Wuhan_2016_2025_Flood_Event_Summary11.csv`（该列是真值，如 `Wuhan_2016_0601` = 2531）对齐，须先确认该列缺失的含义，不能当 0 参与统计。
+- `validation_review.js` 与 `validation_points.js` 的差异从 5 处变为 6 处（新增"样本链已移除"）；两文件的头部差异注释已同步。
+
+**静态校验**：未在 GEE 实跑（AI 无法执行 GEE 脚本），仅 `node --check code_accuraccy/validation_review.js` 通过（语法），并 grep 确认 `POINTS_PER_CLASS` / `SAMPLE_SELECTORS` / `EXPORT_ALL` / `EXPORT_PER_EVENT` / `allSamples` 均已无残留引用（余者仅为说明注释）。
+
+**验收步骤**：
+
+1. `RUN_EVENT_NAMES` 保持三场，在 Code Editor Run，确认无 `is not defined` 类报错；
+2. Console 里不应再出现「所有时段合并样本总数」「按事件统计样本数」「按标签统计样本数」三条 print；
+3. Console 的「判读事件与候选点数」「按事件留出」与改前一致，面板能正常跳点、记录、导出判读 CSV；
+4. 汇总表若导出，`sample_count` 应为空、`status` 为 `OK`，其余列与改前一致。
 
 ---
 
