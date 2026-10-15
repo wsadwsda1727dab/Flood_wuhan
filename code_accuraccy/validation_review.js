@@ -21,6 +21,12 @@
 //      old_label、old_sar_flood）/ 事件前与事件后原始后向散射（VV_pre / VH_pre /
 //      VV_post_c / VH_post_c），判读点改从 reviewImage 上按层抽样；并按事件留出
 //      tune / valid 两组。
+//   6)【改动40】判读点抽样显式 dropNulls:false，并加"请求数 vs 实际返回数"诊断 print。
+//      原因：reviewImage 带 label 带（掩膜 = knownArea），差异层 3/4 按构造在 knownArea
+//      之外、label 无值，默认 dropNulls:true 会把这两层整层剔掉（实测请求 140、返回 60）。
+//   7)【改动41】判读点抽样尺度 REVIEW_SAMPLE_SCALE 由 10 m 改为 30 m（10 m 下点位过多、
+//      单场判读台跑不出来）。只作用于 7.1 的判读点抽样与 4.10b 的分层像元计数；
+//      统计尺度 SAMPLE_SCALE(100 m)、特征栈与四个阈值均未动。
 // 文件末尾追加第二部分：判读面板 + Reference 录入 + 判读结果导出。
 // ============================================================================
 // 0. 研究区
@@ -61,13 +67,15 @@ var SAMPLE_SEED = 20260927;          // 抽样随机种子（【改动37】起�
 
 // ---- 【改动35】判读点抽样尺度（只作用于第二部分目视判读）----
 //   为什么要单独一个常量：SAMPLE_SCALE = 100 m 是**统计**尺度（Summary 的计数列、面积、
-//   稳定区中值都建立在它上面），而判读点要回答的是"眼前这个像元是不是新增水体"——
-//   判定尺度就是判读尺度，两者必须一致。判读员看的是原生 10 m 影像，若还用 100 m 格的
-//   取值去比对，双方测的根本不是同一块地（100 m 格在武汉纬度上东西向只有 ~86 m，
-//   一个格子里装的是上百个 10 m 像元的均值或多数类）。
+//   稳定区中值都建立在它上面），而判读点要回答的是"眼前这个像元是不是新增水体"。
+//   判读员看的是原生影像，若用 100 m 格的取值去比对，双方测的根本不是同一块地
+//   （100 m 格在武汉纬度上东西向只有 ~86 m，一个格子里装的是上百个像元的均值或多数类）。
+//   【改动35】原取 10 m 以求"判定尺度 = 判读尺度"；【改动41】改为 30 m，取折中：
+//   10 m 下点位过多、单场判读台跑不出来，30 m 仍是像元级（非格内大幅聚合）。
+//   已知代价：30 m 是聚合值，用它标定像元级阈值不能直接回填主脚本的 10 m 逻辑。
 //   本常量只用于第二部分的判读点抽样（7.1）与它的分层像元计数（4.10b）：
 //   不动任何统计量、不动特征栈、不动四个阈值，因此 Summary 表与阈值标定都不受影响。
-var REVIEW_SAMPLE_SCALE = 10;   // 判读点抽样尺度（m）：= 判读尺度
+var REVIEW_SAMPLE_SCALE = 30;   // 判读点抽样尺度（m）
 
 // ---- 正负样本口径 ----
 var USE_MEDIUM_AS_FLOOD = true;      // Medium Flood（无 S2 的 SAR 洪水）是否作为正样本
@@ -1104,9 +1112,10 @@ function buildEvent(ev) {
   // 各层像元数（在判读抽样尺度 REVIEW_SAMPLE_SCALE 上数像元，与 7.1 的抽样尺度一致）：
   //   判读抽样按"每层实际像元数"取 min，像元少的层不会被硬抽。频率直方图只发一次请求，
   //   正式判读时在 console 打印备查。
-  //   【改动35】这里从 SAMPLE_SCALE(100 m) 改为 REVIEW_SAMPLE_SCALE(10 m)：直方图的计数
-  //   单位必须与抽样单位相同，否则 min() 拿到的是"100 m 格数"，会把像元少的层压到上限以下
-  //   （例如某层 10 m 有 1800 个像元、落到 100 m 只剩 18 格，就只会抽 18 点而不是 20 点）。
+  //   【改动35】这里从 SAMPLE_SCALE(100 m) 改为 REVIEW_SAMPLE_SCALE：直方图的计数单位必须
+  //   与抽样单位相同，否则 min() 拿到的是"100 m 格数"，会把像元少的层压到上限以下（例如某层
+  //   10 m 有 1800 个像元、落到 100 m 只剩 18 格，就只会抽 18 点而不是 20 点）。
+  //   【改动41】REVIEW_SAMPLE_SCALE 由 10 m 改为 30 m（10 m 下点数过多、单场跑不出来）。
   var stratumHist = stratum.reduceRegion({
     reducer: ee.Reducer.frequencyHistogram(), tileScale: 8, geometry: geom,
     scale: REVIEW_SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
@@ -1131,7 +1140,9 @@ function buildEvent(ev) {
     s2Valid.toFloat()
   ]).rename(FEATURE_NAMES).clip(roi);
 
-  // label 保留掩膜 → Unknown 区域不会进入抽样
+  // label 保留掩膜：Unknown 区域（knownArea 之外）在 label 带上无值。
+  //   注意——抽样时必须配 dropNulls:false（见 7.1 buildReviewPoints），
+  //   否则层 3/4 的像元按构造就在 knownArea 之外，会被整层当作含 null 丢弃。
   var sampleImage = featureStack
     .addBands(label)
     .addBands(confFlood)
@@ -1366,8 +1377,8 @@ print('完成时段数: ' + results.length
 // 为什么这么接：
 //   1) 点位来源：伪标签生成脚本导出的点 CSV 只有属性、没有几何（selectors 里没写
 //      '.geo'），拿回来无法落图；所以判读点位直接在内存里按层抽（geometries: true），
-//      用同一套 SAMPLE_SEED；【改动35】抽样尺度改用 REVIEW_SAMPLE_SCALE（10 m =
-//      判读尺度），不再用统计尺度 SAMPLE_SCALE。
+//      用同一套 SAMPLE_SEED；【改动35】抽样尺度改用 REVIEW_SAMPLE_SCALE，不再用统计尺度
+//      SAMPLE_SCALE；【改动41】该常量由 10 m 改为 30 m（10 m 下点数过多、单场跑不出来）。
 //      【改动34】抽法从"按 label 抽正负两类"改成"按 5 层分层抽"（见 7.1）：
 //      非洪涝 / High Flood / Medium Flood / 版本差异·前已是水 / 版本差异·后不够暗，
 //      每层上限见 REVIEW_POINTS_PER_STRATUM（像元不足时取实际数量）。
@@ -1461,6 +1472,9 @@ function histCount(hist, v) {
 }
 
 function buildReviewPoints(r) {
+  // 返回 {fc, requested}：requested = min(上限, 该层像元数) 求和（发出去的点数），
+  //   fc.size() = 实际返回的点数。两者不等说明抽样影像里有波段把候选点筛掉了
+  //   （【改动40】之前 label 带的掩膜就造成过 140 → 60）。
   var hist = (r.stratumHist.getInfo() || {}).stratum || {};
   var classValues = [];
   var classPoints = [];
@@ -1474,23 +1488,35 @@ function buildReviewPoints(r) {
       total += n;
     }
   });
-  if (total === 0) { return ee.FeatureCollection([]); }
+  if (total === 0) { return {fc: ee.FeatureCollection([]), requested: 0}; }
 
   var fc = r.reviewImage.stratifiedSample({
     numPoints: total,
     classBand: 'stratum',
     region: r.roi,
-    // 【改动35】判读点按 REVIEW_SAMPLE_SCALE(10 m) 抽：采样尺度 = 判读尺度。
-    //   用 SAMPLE_SCALE(100 m) 会把点位落到 100 m 格中心、取值也是格内的聚合值，
-    //   与判读员在原生 10 m 影像上目视的"这一点是不是水"错位（实测同一可差 5 dB 量级）。
+    // 【改动35】判读点按 REVIEW_SAMPLE_SCALE 抽，不再用统计尺度 SAMPLE_SCALE(100 m)：
+    //   用 100 m 会把点位落到格中心、取值是格内聚合值，与判读员在原生影像上目视的
+    //   "这一点是不是水"错位（实测同一可差 5 dB 量级）。
+    //   【改动41】该常量由 10 m 改为 30 m，取折中：既不是统计尺度的百来米聚合值，
+    //   又比 10 m 点数少一个量级（10 m 下单场点数过多、判读台跑不出来）。
+    //   已知代价：30 m 下导出的 VV_pre/VH_pre/VV_post_c/VH_post_c/MNDWI 都是 30 m 聚合值，
+    //   而它们正是四个阈值的直接输入；用聚合值标定像元级阈值不能直接回填主脚本。
     scale: REVIEW_SAMPLE_SCALE,
     classValues: classValues,
     classPoints: classPoints,
     geometries: true,
     seed: SAMPLE_SEED,
+    // 【改动40】必须显式关掉 dropNulls：reviewImage 里带着 label 带（sampleImage
+    //   :1146-1149），而 label 的掩膜是 knownArea（:1042/:1044-1047）；层 3/4 的像元
+    //   按构造是 droppedByNewThr = oldFloodUsed ∧ ¬floodUsed（:1088），全在 knownArea
+    //   之外 → label 带上无值。默认 dropNulls:true 会把这些候选点当"含 null"整层剔掉，
+    //   请求 140 点只返回 60 点（实测 2020_0705 = 20/20/20/0/0）。层 0/1/2 在 knownArea
+    //   内、label 有值，所以只有 3/4 两层消失。排除 Unknown 已由 stratum 自身的掩膜
+    //   samplable（:1096）完成，此处不需要 label 再筛一次。
+    dropNulls: false,
     tileScale: 4
   });
-  return fc.map(function (f) {
+  var mapped = fc.map(function (f) {
     var c = f.geometry().coordinates();
     return f.set({
       point_id: ee.String(r.name).cat('_').cat(ee.String(f.get('system:index'))),
@@ -1503,25 +1529,32 @@ function buildReviewPoints(r) {
       latitude: c.get(1)
     });
   });
+  return {fc: mapped, requested: total};
 }
 
 var REVIEW_EVENTS = [];    // 参与判读的事件名
 var REVIEW_POINTS = [];    // 与 REVIEW_EVENTS 一一对应的验证点表
-var REVIEW_COUNTS = [];    // 与 REVIEW_EVENTS 一一对应的点数（JS 数值）
+var REVIEW_COUNTS = [];    // 与 REVIEW_EVENTS 一一对应的实际点数（JS 数值）
 var REVIEW_RESULTS = [];   // 与 REVIEW_EVENTS 一一对应的 results 元素（取证图层用）
+var REVIEW_REQUESTED = []; // 与 REVIEW_EVENTS 一一对应的请求点数（Σ min(上限, 该层像元数)）
 
 results.forEach(function (r) {
   if (r.skipped) { return; }
-  var pts = buildReviewPoints(r);
-  var n = pts.size().getInfo();
+  var built = buildReviewPoints(r);
+  var n = built.fc.size().getInfo();
   if (n === 0) { return; }
   REVIEW_EVENTS.push(r.name);
   REVIEW_RESULTS.push(r);
-  REVIEW_POINTS.push(pts);
+  REVIEW_POINTS.push(built.fc);
   REVIEW_COUNTS.push(n);
+  REVIEW_REQUESTED.push(built.requested);
 });
 
 print('判读事件与候选点数（每场最多 5 层 × 每层上限，见 REVIEW_POINTS_PER_STRATUM）：',
+  ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_COUNTS));
+// 【改动40】请求数 vs 实际返回数：两者不等说明抽样影像里有波段掩膜把候选点筛掉了。
+print('【改动40】请求点数 vs 实际返回点数（不等即有波段掩膜在筛点）：',
+  ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_REQUESTED), '→',
   ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_COUNTS));
 print('【改动34】按事件留出：独立验证集 valid = ' + REVIEW_EVENTS.filter(function (nm) {
   return eventSplit(nm) === 'valid';

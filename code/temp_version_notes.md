@@ -10,10 +10,12 @@
 > 2026-09-24 增补（下午）：**【改动32】S2 云掩膜口径开关**（`QA60` / `QA60 ∧ SCL`）与**【改动33】"零暴雨"对照事件**（`isControl`，默认不进全量）——用于给 `2022_0627` / `2023_0618` 的"残云 / 季节性明水"问题定案（首轮目视复核未通过）。见第 5 节末。
 > 2026-09-24 增补（晚）：**全量重跑的新 `Summary10.csv`**（18 事件、`2025_0522` 已带 `s2PostEnd` 截断）——验收全部命中（15 天 / 32 景 / 覆盖 86.0% / 面积 28.926 km²），17 场未改动事件与 `Summary9` 逐字段一致；同名的旧文件已删除。见第 5 节末。
 > 2026-09-29 增补：**【改动34】Sentinel-1 IW GRD 预/后向散射初值约束**——`sarFlood01` 增加事件前非水、事件后为水条件，用于排除事件前已有水体；新增参数见第 4 节，规则说明见第 5 节末。
-> 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE = 10`，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。
-> 2026-09-30 增补：**【改动37】`validation_review.js` 定位收敛为「只做目视判读精度评价」**——移除 4.13 那条按 `label` 抽正负两类的训练样本点链（含 `POINTS_PER_CLASS`、`SAMPLE_SELECTORS`、`samples.size()` 阻塞调用、`allSamples` 合并、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出）。判读点链（5 层 / 10 m）不受影响；`summary.sample_count` 固定为 `null`。见第 5 节末。
+> 2026-09-30 增补：**【改动35】判读点抽样尺度分离**（`code_accuraccy/validation_review.js` 的 `REVIEW_SAMPLE_SCALE`，当时 = 10，抽样尺度 = 判读尺度）与**【改动36】训练/验证样本点抽样尺度分离**（`code/pseudo_labels1.js` 新增 `SAMPLE_POINT_SCALE = 10`，只替换 4.13 的 `stratifiedSample`，统计尺度仍为 100 m）。两条改动同源：统计尺度与取值/判读尺度必须分开。见第 4 节与第 5 节末。**注：判读台侧那个常量已被【改动41】改为 30 m，「抽样尺度 = 判读尺度」的表述作废。**
+> 2026-09-30 增补：**【改动37】`validation_review.js` 定位收敛为「只做目视判读精度评价」**——移除 4.13 那条按 `label` 抽正负两类的训练样本点链（含 `POINTS_PER_CLASS`、`SAMPLE_SELECTORS`、`samples.size()` 阻塞调用、`allSamples` 合并、`EXPORT_ALL` / `EXPORT_PER_EVENT` 两个导出）。判读点链（5 层 / 10 m，【改动41】后为 30 m）不受影响；`summary.sample_count` 固定为 `null`。见第 5 节末。
 > 2026-09-30 增补：**【改动38】`validation_review.js` 再移除逐场汇总表链**——4.12 `countImage`/`counts`、4.14 汇总行（`sensCommon`/`nFloodAt`/`summary` 全字段）、4.15 S2 质控、`summaryBase()` 与 `SUMMARY_SELECTORS`、`summaryFC` 与 `EXPORT_SUMMARY`、`LOW_S2_COVER_MIN`/`MIN_HIGH_FLOOD_SHARE`/`NO_OPTICAL_COVER` 三个阈值一并删除。从此该文件**没有任何 `Export`**，唯一出口是判读结果 CSV；需要汇总表与像元计数请跑主脚本 `code/pseudo_labels1.js`。判读点链不受影响。见第 5 节末。
 > 2026-09-30 增补：**【改动39】`validation_review.js` 移除 S2 后窗越界尾段诊断**（【改动31】的 4.5b 与开关 `S2_TAIL_DIAG`）——三场靠它定 `s2PostEnd` 的事件都已定案，按当前事件表越界命中为 0，其 `reduceRegion` 本就包在 `if (tailHits.length > 0)` 内恒不执行。**越界报警的护栏保留**：末尾【改动29】的 `reportS2WindowOverlaps()` 每次加载跑一遍（纯 JS、零算力）。判读点链不受影响。见第 5 节末。
+> 2026-10-14 增补：**【改动40】`validation_review.js` 判读点抽样显式 `dropNulls: false`**——修复第 3/4 层（差异层）被整层剔除的 bug：`reviewImage` 携带的 `label` 波段掩膜是 `knownArea`，而差异层按构造就在 `knownArea` 之外，`stratifiedSample` 默认丢弃含 null 的样本，实测 `2020_0705` 应出 140 点却只得 60。同时新增"请求点数 vs 实际返回点数"诊断 print。见第 5 节末。
+> 2026-10-14 增补：**【改动41】`validation_review.js` 判读点抽样尺度 `REVIEW_SAMPLE_SCALE` 由 10 m 改为 30 m**——10 m 下点位过多、单场判读台跑不出来。改的是常量本身（`:78`），两处使用点（4.10b 分层像元直方图 `:1121`、7.1 判读点抽样 `:1504`）随变量联动；统计尺度 `SAMPLE_SCALE`(100 m)、特征栈与四个阈值均未动。**代价**：30 m 下导出的 `VV_pre`/`VH_pre`/`VV_post_c`/`VH_post_c`/`MNDWI` 都是 30 m 聚合值，而它们是四个阈值的直接输入，用聚合值标定像元级阈值不能直接回填主脚本。见第 5 节末。
 
 ---
 
@@ -611,13 +613,13 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 | `:1460` | return 对象去掉 `samples: samples` |
 | `:1565-1583`、`:1594-1595` | 删 `allSamples` 合并块与 3 条样本 print；print 的「有样本的时段」改为「跳过（无 S1）的时段」；删 `EXPORT_ALL` / `EXPORT_PER_EVENT` 两个开关及两块导出，只留 `EXPORT_SUMMARY` |
 
-**为什么判读不受影响**：判读点走的是第二部分的 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE = 10 m`、`seed = SAMPLE_SEED`），读的是 `r.reviewImage` / `r.stratum` / `r.stratumHist` / `r.roi`，与 4.13 的样本链互不引用。删除前后判读点的数量、位置、顺序、随机性完全一致。`SAMPLE_SCALE`(100 m 统计尺度) 与 `counts`（4.12）保留，Summary 各统计列不受影响。
+**为什么判读不受影响**：判读点走的是第二部分的 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE`（当时 10 m，【改动41】后为 30 m）、`seed = SAMPLE_SEED`），读的是 `r.reviewImage` / `r.stratum` / `r.stratumHist` / `r.roi`，与 4.13 的样本链互不引用。删除前后判读点的数量、位置、顺序、随机性完全一致。`SAMPLE_SCALE`(100 m 统计尺度) 与 `counts`（4.12）保留，Summary 各统计列不受影响。
 
 **哪些量变了、哪些没变**：
 
 | 项 | 是否变化 |
 |---|---|
-| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| 判读点（5 层 / 10 m，【改动41】后为 30 m）数量、位置、顺序、随机种子 | 不变 |
 | `counts`、4.12/4.14/4.15 全部统计列 | 不变 |
 | `stratum` / `stratumHist`（已按【改动35】用 10 m） | 不变 |
 | `summary.sample_count` | **变**：由「实际样本数」变为恒 `null`（列保留，避免与旧表串列） |
@@ -667,7 +669,7 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 | `:1396-1400` | 7 节删 `var EXPORT_SUMMARY = false;` 与 `if (EXPORT_SUMMARY) { Export.table.toDrive(...) }` |
 | `:104-109`、`:845`、`:923` | 三处过时注释同步（`s2_index_stat` / `vv_offset_db` / `s2_valid_px` 的口径记录已随汇总表移除） |
 
-**为什么判读不受影响**：判读点走 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE = 10 m`、`seed = SAMPLE_SEED`），读的是 `reviewImage`（4.11 特征栈 + `stratum` + 新旧标签 + 4 个阈值输入）与 `stratumHist`（4.10b），与 4.12 / 4.14 / 4.15 无引用关系。`REVIEW_SELECTORS` 27 列一个不少，判读点的数量、位置、顺序、随机性完全一致。
+**为什么判读不受影响**：判读点走 `buildReviewPoints(r)`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE`（当时 10 m，【改动41】后为 30 m）、`seed = SAMPLE_SEED`），读的是 `reviewImage`（4.11 特征栈 + `stratum` + 新旧标签 + 4 个阈值输入）与 `stratumHist`（4.10b），与 4.12 / 4.14 / 4.15 无引用关系。`REVIEW_SELECTORS` 27 列一个不少，判读点的数量、位置、顺序、随机性完全一致。
 
 **保留的局部量**（切勿因"汇总表没了"顺手删）：`lowSlope` / `nonPermanentWater` / `opticalFlood` / `s2Valid` / `floodUsed` / `nonFloodUsed` / `highFlood01` / `mediumFlood01` / `highNonFlood01` / `mediumNonFlood01` 全部是 `label`、`conf_*`、`stratum` 的上游；`s1preCol` / `s2srCol` / `s2l1cCol` / `avail` / `s2Source` 既喂真影像合成也喂数据可用性检查与跳过判定；`SAMPLE_SCALE`(100 m) 仍是去偏/稳定区中值与 DIAG 的统计尺度。
 
@@ -675,7 +677,7 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 
 | 项 | 是否变化 |
 |---|---|
-| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| 判读点（5 层 / 10 m，【改动41】后为 30 m）数量、位置、顺序、随机种子 | 不变 |
 | `stratum` / `stratumHist` / `reviewImage` / `REVIEW_SELECTORS` 27 列 | 不变 |
 | 逐场阻塞往返次数 | **减 5**（`counts`、`s1_valid_cover`、`nFloodAt`×2、两次 `pixelArea`） |
 | Console 的每场「洪涝 N 像元 / 非洪涝 N 像元」、逐景偏移摘要 | **移除**（要看就打开 `DIAG`，或跑主脚本的 Summary） |
@@ -729,7 +731,7 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 
 | 项 | 是否变化 |
 |---|---|
-| 判读点（5 层 / 10 m）数量、位置、顺序、随机种子 | 不变 |
+| 判读点（5 层 / 10 m，【改动41】后为 30 m）数量、位置、顺序、随机种子 | 不变 |
 | `stratum` / `stratumHist` / `reviewImage` / `REVIEW_SELECTORS` 27 列 | 不变 |
 | 事件表、三个 `s2PostEnd`、S2 窗口、抽样 | 不变 |
 | 每场 GEE 请求次数 | **不变**（该分支本就恒不执行） |
@@ -749,6 +751,94 @@ scale: SAMPLE_SCALE,   →   scale: SAMPLE_POINT_SCALE,
 2. Console 顶部仍应出现一行 `【改动29】S2 后窗越界自检：未发现相邻暴雨窗口重叠。`（这正是保留的护栏）；
 3. Console 不应再出现 `【改动31】… 的 S2 后窗越界尾段诊断`；
 4. 面板能正常跳点、记录、导出判读 CSV。
+
+### validation_review.js【改动40】：判读点抽样显式 `dropNulls: false`（修复第 3/4 层被整层剔除）
+
+**触发（2026-10-14）**：跑 `RUN_EVENT_NAMES` 三场后，`Wuhan_2020_0705` 的 Console 打印候选点数为 **60**，而不是按配额应得的 140。同一场的分层像元直方图与配额诊断都正常：
+
+- 直方图（10 m）：`0: 2002402.6 / 1: 160303.0 / 2: 33962.7 / 3: 75502.4 / 4: 24535.7`；
+- 配额诊断：`["0:nonflood=20","1:high_flood=20","2:medium_flood=20","3:cut_prewater=40","4:cut_postweak=40"]`（层表与配额表逐项对齐）。
+
+按 `n = Math.round(Math.min(cap, histCount(hist, s.value)))` 计算，第 3/4 层各应取到上限 40，请求总数应是 140；实际返回恰好 60 = 前三层之和。**所以不是"差异层没有像元"，也不是"直方图数成 0"，而是请求出去 140 个点、回来的只有 60 个。**
+
+**根因**：`buildReviewPoints` 抽样的输入是 `r.reviewImage`，而 `reviewImage` 派生自 `sampleImage`，后者带上了 `label` 波段：
+
+- `label = ee.Image(0).where(floodUsed, 1).updateMask(knownArea)`，掩膜是 `knownArea = floodUsed.or(nonFloodUsed)`；
+- 第 3/4 层来自 `droppedByNewThr = oldFloodUsed.and(floodUsed.not())`，按构造**恒在 `knownArea` 之外**；
+- 第 0/1/2 层全部落在 `knownArea` 之内，`label` 有值。
+
+`stratifiedSample` 的 `dropNulls` 默认 `true`，会丢弃任一输入波段为 null 的样本 → 第 3/4 层的候选点被**整层剔除**，返回 60。原注释"label 保留掩膜 → Unknown 区域不会进入抽样"是其本意（避免抽到 Unknown），但副作用是把差异层一起筛掉了。
+
+**改动（均在 `code_accuraccy/validation_review.js`）**：
+
+| 位置（改后行号） | 改动 |
+|---|---|
+| `:24-26` | 文件头差异清单新增第 6 条：抽样显式 `dropNulls:false` + 请求/返回点数诊断 print |
+| `:1143-1145` | `label` 保留掩膜处的注释扩写，点明抽样必须配 `dropNulls:false`（见 7.1 `buildReviewPoints`） |
+| `:1491` | `total === 0` 的早退返回由 `ee.FeatureCollection([])` 改为 `{fc: ee.FeatureCollection([]), requested: 0}` |
+| `:1509-1516` | `stratifiedSample` 参数块新增 `dropNulls: false`（在 `seed` 之后、`tileScale` 之前），并加说明注释 |
+| `:1519-1532` | `buildReviewPoints(r)` 返回值由 `FeatureCollection` 改为 `{fc, requested}`；函数头补两行注释：两数不等即代表有波段掩膜在筛点 |
+| `:1539` / `:1541-1551` | 新增 `var REVIEW_REQUESTED = [];`；`results.forEach` 改读 `built.fc` / `built.requested`，并把 `built.requested` push 进 `REVIEW_REQUESTED` |
+| `:1555-1558` | 新增诊断 print：`【改动40】请求点数 vs 实际返回点数（不等即有波段掩膜在筛点）：`（`:1555` 注释、`:1556-1558` print 本体） |
+
+**未改动**：原有那条 `print('判读事件与候选点数…', ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_COUNTS))` 保留（现 `:1553-1554`），`REVIEW_COUNTS` 语义不变（仍是实际返回点数），`countOf(i)` / 面板统计不受影响；导出 29 列不受影响（`label` 本不在 `REVIEW_SELECTORS` 里）。文件行数 1868 → 1891（【改动41】后为 1901）。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 第 3/4 层的候选点数 | **由 0 变回上限内实际数**（`2020_0705`：60 → 预期 140） |
+| 第 0/1/2 层点数、位置、顺序 | 不变（`dropNulls:false` 不改变有值像元的抽样结果，`seed` 未动） |
+| 抽样尺度、配额表、层定义、六个阈值 | 不变 |
+| 导出列（29 列）与判读面板 | 不变 |
+| 每场 GEE 请求次数 | 不变（抽样本就只发一次） |
+
+**静态校验**：**未在 GEE 实跑**（AI 无法执行 GEE 脚本）；本次会话 `ops_bash`（报 `EXECUTOR_UNAVAILABLE` / `--temp is not an existing directory`）与 `pwsh`（报无可用沙箱后端）两个执行后端均不可用，`node --check code_accuraccy/validation_review.js` **未能执行**，语法为人工逐行核对（对象字面量括号配平、`buildReviewPoints` 两条 return 路径返回类型一致）。另：`dropNulls` 默认值为 `true` 是从"恰好多丢第 3/4 两层"的行为反推，**未核对 GEE 官方文档**。
+
+**验收步骤**：
+
+1. 在 Code Editor Run（三场即可），Console 应出现 `【改动40】请求点数 vs 实际返回点数…`：`{"Wuhan_2020_0705": 140, …} → {"Wuhan_2020_0705": 140, …}`（三场上限 420）；
+2. 若两个字典仍不等，差值直接指出还有别的波段在筛点（下一步查 `reviewImage` 里各波段的掩膜）；
+3. 面板能正常跳点、记录、导出判读 CSV；
+4. 导出的判读 CSV 应出现 `stratum` = 3 / 4 的点（这是此前完全没有的两层）。
+
+### validation_review.js【改动41】：判读点抽样尺度由 10 m 改为 30 m
+
+**触发（2026-10-14）**：判读台在 10 m 下点位过多，单场事件跑不出来（Code Editor 端超时/卡住，无法完成一次判读）。把 `REVIEW_SAMPLE_SCALE` 由 10 m 放宽到 30 m，取折中：仍是像元级，但点数比 10 m 少一个量级。
+
+**改动（仅一处常量赋值）**：
+
+| 位置（改后行号） | 改动 |
+|---|---|
+| `:68-78` | 常量块头部注释改写：删掉"判定尺度 = 判读尺度、两者必须一致"的断言（30 m 已不等于判读尺度），改为【改动41】的折中理由 + 已知代价 |
+| `:78` | `var REVIEW_SAMPLE_SCALE = 10;` → `= 30;`（同行注释由"判读点抽样尺度（m）：= 判读尺度"改为"判读点抽样尺度（m）"） |
+| `:27-29` | 文件头差异清单新增第 7 条：【改动41】尺度由 10 m 改 30 m |
+| `:1112-1118` | 4.10b 直方图注释：删掉"REVIEW_SAMPLE_SCALE(10 m)"的定点写法（改回变量名），并加一行【改动41】说明 |
+| `:1380-1381` | 7.1 导语注释：同上，加一行【改动41】说明 |
+| `:1497-1504` | `stratifiedSample` 的 `scale` 注释：同步，并写明 30 m 聚合值不能直接用于标定像元级阈值 |
+
+**未改动**：`SAMPLE_SCALE = 100 m`（统计尺度）、特征栈、四个 S1 阈值、配额表 `REVIEW_POINTS_PER_STRATUM`、层定义、导出 29 列、判读面板。该常量的两个使用点（4.10b 分层像元直方图 `:1121`、7.1 判读点抽样 `:1504`）都是引用变量，随常量联动，无硬编码 10。
+
+**哪些量变了、哪些没变**：
+
+| 项 | 是否变化 |
+|---|---|
+| 判读点抽样尺度、直方图计数尺度 | **10 m → 30 m** |
+| 每场点数上限（Σ 配额） | 不变（仍 140/场），但 `min(上限, 该层像元数)` 里的"像元数"按 30 m 格计，**只会更小** → 实际点数可能进一步下降 |
+| 点位（经纬度）与随机性 | **变**（尺度变了，`stratifiedSample` 结果随之改变；30 m 一次实测与 10 m 那批逐点无一对得上） |
+| 每场 GEE 请求次数 | 不变 |
+| 导出的 `VV_pre`/`VH_pre`/`VV_post_c`/`VH_post_c`/`MNDWI` | **数值变**（由 10 m 像元值变成 30 m 聚合值） |
+
+**已知代价（必须记住）**：导出的 `VV_pre` / `VH_pre` / `VV_post_c` / `VH_post_c` 正是【改动34】四个阈值的直接输入。30 m 是格内聚合值，用聚合值去标定像元级阈值，**标定结果不能直接回填主脚本 `code/pseudo_labels1.js` 的 10 m 逻辑**；若最终要标定，应回到 10 m 抽样，或在文档中明确"阈值按 30 m 口径标定"并同步改主脚本尺度。
+
+**静态校验**：**未在 GEE 实跑**（AI 无法执行 GEE 脚本）；本次会话 `ops_bash` / `pwsh` 两个执行后端均不可用，`node --check` 未能执行。改动为一处数值赋值 + 注释，语法风险为零；行号已用 `ops_grep` 逐条复核。
+
+**验收步骤**：
+
+1. Run 后 Console 的 `【改动40】请求点数 vs 实际返回点数` 两数仍应相等（尺度不影响该诊断）；
+2. 分层像元直方图的计数会随 30 m 明显变化（同一场比 10 m 时少约一个量级），属预期；
+3. 导出的判读点经纬度与 10 m 那批完全不同，**不可与旧 141 点合算**；
+4. `csvdata/validation_points/Wuhan_validation_reference_2020_0705.csv`（30 m、60 点）即本改动的产物，已可作参照。
 
 ---
 
