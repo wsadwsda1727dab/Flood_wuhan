@@ -92,36 +92,36 @@
 
 ## 4. 全局参数表（pseudo_labels1）
 
-| 参数 | 值 | 含义 |
-|---|---|---|
-| `VV_THRESHOLD` | −4.0 dB | VV 后−前下降阈值 |
-| `VH_THRESHOLD` | −3.5 dB | VH 后−前下降阈值 |
-| `MNDWI_THRESHOLD` | 0.2 | 光学水体阈值 |
-| `SLOPE_LIMIT` | 5° | 低坡度阈值 |
-| `STABLE_TOLERANCE` | 1.5 dB | SAR 稳定区容差 |
-| `PERMANENT_WATER_TH` | 90% | JRC 永久水体阈值 |
-| `VV_PRE_NONWATER_TH` | −15 dB | **【改动34】** 事件前 VV 高于此值才视为非水 |
-| `VH_PRE_NONWATER_TH` | −20 dB | **【改动34】** 事件前 VH 高于此值才视为非水 |
-| `VV_POST_WATER_TH` | −16 dB | **【改动34】** 事件后 VV 低于此值才视为水体 |
-| `VH_POST_WATER_TH` | −22 dB | **【改动34】** 事件后 VH 低于此值才视为水体 |
-| `S2_MAX_CLOUD` | 90% | S2 整景云量上限 |
-| `SAMPLE_SCALE` | 100 m | **统计尺度**：计数列、面积、去偏/稳定区中值（**【改动36】起不再用于抽样点位**） |
-| `SAMPLE_POINT_SCALE` | 10 m | **【改动36】抽样点位尺度**：只作用于 4.13 的 `stratifiedSample`（`scale` 参数），令样本取值尺度 = 目视判读尺度。统计量、特征栈、四个 SAR 阈值均不受影响 |
-| `POINTS_PER_CLASS` | 2000 | 每类最多抽样点数 |
-| `SAMPLE_SEED` | 42 | 抽样随机种子 |
-| `PRE_WINDOW_DAYS` / `PRE_GAP_DAYS` | 24 / 5 天 | 前窗长度 / 前窗与事件间隔 |
-| `S1_POST_PAD_DAYS` | 18 天 | **【改动24】** Sentinel-1 后时相**搜索**窗口长度（实际合成仍是"最早 S1 之后 8 天"，见 `post8`） |
-| `S2_POST_PAD_DAYS` | **18 天** | **【改动24/25】** Sentinel-2 后时相窗口长度。实测 5 天会把洪水区的云洞放大（覆盖掉到 0~81%）、10 天仍救不了 `2020_0705`（覆盖 23.6%），最终与 S1 一致取 18 天（覆盖回到 86.5%~100%） |
-| `S2_INDEX_STAT` | `'max'` | **【改动25】** 光学指数的合成口径：`'max'` = 逐景算指数后取窗口峰值；`'median'` = 逐景指数取中值（对照/敏感性分析用）。**【改动26】起它只作用于 `NDVI`/`MNDWI`**，`S2_Valid` 已解耦、恒取 max |
-| `ev.s2Source`（事件表项，可选） | 未设 / `'L1C'` / `'L2A'` | **【改动30】** 强制指定该事件的 S2 源；当前只有 `Wuhan_2017_0824` 设为 `'L1C'`（压回基线口径）。不设时沿用"L2A 优先，无 L2A 才回退 L1C" |
-| `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` | 0.5 / 0.3 / 0.05 | **【改动27】** S2 光学覆盖质控阈值：覆盖率 < 0.5 或正样本 High 占比 < 0.3 → `LOW_S2_COVER`；覆盖率 < 0.05 或 High 占比 = 0 → `NO_OPTICAL`。结果写入 `s2_qc_flag` 列 |
-| `TZ_OFFSET_HOURS` | 8 | 北京时 → UTC |
-| `S1_FILL_DB` | −50 dB | 低于此值视为 GRD 切片填充值 |
-| `DEBIAS_MODE` | `'perImage'` | 去偏模式：`none` / `global` / `perImage` |
-| `DIAG` | `false` | 诊断输出开关 |
-| `RUN_EVENT_NAMES` | 5 个对照事件 | **【改动24】** 默认只跑 `2021_0823 / 2022_0627 / 2023_0618 / 2023_0719 / 2020_0705`（4 个低面积事件 + 1 个大面积对照）；对照已通过（见第 5 节末），下一步改回 `null` 再全量跑 19 个时段 |
-| `VIEW_EVENT_NAME` | `'Wuhan_2020_0705'` | Map 上显示哪个时段；**必须是字符串**（数组会让 `name ===` 判断恒为 false） |
-| `EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY` | 均为 `true`，导出块**已取消注释** | 全量会产生 21 个任务（1 合并 + 1 汇总 + 19 每事件） |
+| 参数                                                               | 值                      | 含义                                                                                                                                       |
+| ---------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `VV_THRESHOLD`                                                   | −4.0 dB                | VV 后−前下降阈值                                                                                                                               |
+| `VH_THRESHOLD`                                                   | −3.5 dB                | VH 后−前下降阈值                                                                                                                               |
+| `MNDWI_THRESHOLD`                                                | 0.2                    | 光学水体阈值                                                                                                                                   |
+| `SLOPE_LIMIT`                                                    | 5°                     | 低坡度阈值                                                                                                                                    |
+| `STABLE_TOLERANCE`                                               | 1.5 dB                 | SAR 稳定区容差                                                                                                                                |
+| `PERMANENT_WATER_TH`                                             | 90%                    | JRC 永久水体阈值                                                                                                                               |
+| `VV_PRE_NONWATER_TH`                                             | −15 dB                 | **【改动34】** 事件前 VV 高于此值才视为非水                                                                                                              |
+| `VH_PRE_NONWATER_TH`                                             | −20 dB                 | **【改动34】** 事件前 VH 高于此值才视为非水                                                                                                              |
+| `VV_POST_WATER_TH`                                               | −16 dB                 | **【改动34】** 事件后 VV 低于此值才视为水体                                                                                                              |
+| `VH_POST_WATER_TH`                                               | −22 dB                 | **【改动34】** 事件后 VH 低于此值才视为水体                                                                                                              |
+| `S2_MAX_CLOUD`                                                   | 90%                    | S2 整景云量上限                                                                                                                                |
+| `SAMPLE_SCALE`                                                   | 100 m                  | **统计尺度**：计数列、面积、去偏/稳定区中值（**【改动36】起不再用于抽样点位**）                                                                                            |
+| `SAMPLE_POINT_SCALE`                                             | 10 m                   | **【改动36】抽样点位尺度**：只作用于 4.13 的 `stratifiedSample`（`scale` 参数），令样本取值尺度 = 目视判读尺度。统计量、特征栈、四个 SAR 阈值均不受影响                                      |
+| `POINTS_PER_CLASS`                                               | 2000                   | 每类最多抽样点数                                                                                                                                 |
+| `SAMPLE_SEED`                                                    | 42                     | 抽样随机种子                                                                                                                                   |
+| `PRE_WINDOW_DAYS` / `PRE_GAP_DAYS`                               | 24 / 5 天               | 前窗长度 / 前窗与事件间隔                                                                                                                           |
+| `S1_POST_PAD_DAYS`                                               | 18 天                   | **【改动24】** Sentinel-1 后时相**搜索**窗口长度（实际合成仍是"最早 S1 之后 8 天"，见 `post8`）                                                                      |
+| `S2_POST_PAD_DAYS`                                               | **18 天**               | **【改动24/25】** Sentinel-2 后时相窗口长度。实测 5 天会把洪水区的云洞放大（覆盖掉到 0~81%）、10 天仍救不了 `2020_0705`（覆盖 23.6%），最终与 S1 一致取 18 天（覆盖回到 86.5%~100%）            |
+| `S2_INDEX_STAT`                                                  | `'max'`                | **【改动25】** 光学指数的合成口径：`'max'` = 逐景算指数后取窗口峰值；`'median'` = 逐景指数取中值（对照/敏感性分析用）。**【改动26】起它只作用于 `NDVI`/`MNDWI`**，`S2_Valid` 已解耦、恒取 max         |
+| `ev.s2Source`（事件表项，可选）                                           | 未设 / `'L1C'` / `'L2A'` | **【改动30】** 强制指定该事件的 S2 源；当前只有 `Wuhan_2017_0824` 设为 `'L1C'`（压回基线口径）。不设时沿用"L2A 优先，无 L2A 才回退 L1C"                                           |
+| `LOW_S2_COVER_MIN` / `MIN_HIGH_FLOOD_SHARE` / `NO_OPTICAL_COVER` | 0.5 / 0.3 / 0.05       | **【改动27】** S2 光学覆盖质控阈值：覆盖率 < 0.5 或正样本 High 占比 < 0.3 → `LOW_S2_COVER`；覆盖率 < 0.05 或 High 占比 = 0 → `NO_OPTICAL`。结果写入 `s2_qc_flag` 列         |
+| `TZ_OFFSET_HOURS`                                                | 8                      | 北京时 → UTC                                                                                                                                |
+| `S1_FILL_DB`                                                     | −50 dB                 | 低于此值视为 GRD 切片填充值                                                                                                                         |
+| `DEBIAS_MODE`                                                    | `'perImage'`           | 去偏模式：`none` / `global` / `perImage`                                                                                                      |
+| `DIAG`                                                           | `false`                | 诊断输出开关                                                                                                                                   |
+| `RUN_EVENT_NAMES`                                                | 5 个对照事件                | **【改动24】** 默认只跑 `2021_0823 / 2022_0627 / 2023_0618 / 2023_0719 / 2020_0705`（4 个低面积事件 + 1 个大面积对照）；对照已通过（见第 5 节末），下一步改回 `null` 再全量跑 19 个时段 |
+| `VIEW_EVENT_NAME`                                                | `'Wuhan_2020_0705'`    | Map 上显示哪个时段；**必须是字符串**（数组会让 `name ===` 判断恒为 false）                                                                                       |
+| `EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY`                 | 均为 `true`，导出块**已取消注释** | 全量会产生 21 个任务（1 合并 + 1 汇总 + 19 每事件）                                                                                                       |
 
 ---
 
