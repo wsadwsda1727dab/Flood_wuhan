@@ -12,7 +12,7 @@
 
 **一句话简介**：在 Google Earth Engine 上用 Sentinel-1 变化检测 + Sentinel-2 光学证据，为武汉市 2016–2025 年的 18 场暴雨洪涝事件生成洪涝伪标签与分层随机森林训练样本，并通过人工目视判读对伪标签做独立精度验证。
 
-> 依据：`AGENTS.md`（项目速览）、`code/temp_version_notes.md:16-27`（目标与范围）、`weeklyReport/伪标签验证.md:1-30`（研究流程定位）。
+> 依据：`AGENTS.md`（项目速览）、`code/temp_version_notes.md` 第 1 节「目标与范围」、`weeklyReport/伪标签验证.md:1-30`（研究流程定位）。
 
 ---
 
@@ -48,7 +48,7 @@ c2/                                  ← 项目根目录（已确认）
 │   ├── temp.original.js             ← 历史存档：最初单事件版本
 │   ├── temp.js                      ← 历史存档：19 事件版
 │   ├── temp1.1.js ~ temp1.5.js      ← 历史存档：5 个中间版本
-│   ├── temp_version_notes.md        ← 版本演进与诊断记录（33 节，改动编号到 34）
+│   ├── temp_version_notes.md        ← 版本演进与诊断记录（11 章，改动编号到【改动41】）
 │   └── rivision.md                  ← S1/S2 后时相窗口分离修改建议（改动24 的来源）
 │
 ├── code_accuraccy/                  ← 第 2 阶段：精度验证（注：目录名拼写如此，不改名）
@@ -107,8 +107,8 @@ c2/                                  ← 项目根目录（已确认）
 **标签语义**（务必写进论文口径）：**「事件结束（暴雨时段终点）后 18 天内水体的峰值并集」**（`doc/数据说明附录_Wuhan洪涝伪标签_Summary10.md:12`）。
 
 **重要工程细节**（已在项目文档中被反复强调）：
-- GEE 影像算术（如 `subtract`）会丢失影像属性（连 `system:time_start` 一起丢），需要显式 `.set()` 带过去（`code/temp_version_notes.md:656`）。
-- `Export.table.toDrive` 不写 `selectors` 时列序不可靠，历史上出现过表头与取值错位（`code/temp_version_notes.md:657`）。
+- GEE 影像算术（如 `subtract`）会丢失影像属性（连 `system:time_start` 一起丢），需要显式 `.set()` 带过去（`code/temp_version_notes.md` 第 10 节「附：过程中形成的两个"教训"」第 1 条）。
+- `Export.table.toDrive` 不写 `selectors` 时列序不可靠，历史上出现过表头与取值错位（`code/temp_version_notes.md` 第 10 节「附：过程中形成的两个"教训"」第 2 条）。
 - Sentinel-1 GRD 切片填充值是很大的负值（不是 0），`mask()` 看不见，必须用 `dropFill` 显式掩掉（`code/pseudo_labels1.js:81-84, 493-498`）。
 
 ### 4.2 模块 B：验证点生成与目视判读（`code_accuraccy/`）
@@ -130,7 +130,7 @@ c2/                                  ← 项目根目录（已确认）
 
 | 文档 | 作用 |
 | --- | --- |
-| `code/temp_version_notes.md` | 版本演进（改动 1→34）、全局参数表、诊断工具箱、22 条已验证结论、已知问题与待办 |
+| `code/temp_version_notes.md` | 版本演进（改动 1→41、【改动41】为最新一条）、全局参数表（含 4.1 判读台侧参数）、诊断工具箱、22 条已验证结论、已知问题与待办 |
 | `csvdata/pseudo_labels/事件筛查与训练集划分{,1,2}.md` | 三代 A/B/C 事件筛查与训练/验证划分建议（v1 基线 / v1.1 Summary10 / v2 Summary11） |
 | `csvdata/pseudo_labels/S2后窗与光学口径调整总结.md` | 把「代码改了什么」与「汇总表变了什么」放一起，供论文方法部分引用 |
 | `csvdata/validation_points/伪标签精度验证_数据核查.md` | 2020_0705 事件 401 点的数据特征、方法与精度结果（OA 0.875、Kappa 0.750） |
@@ -271,7 +271,7 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | `VIEW_EVENT_NAME` | `'Wuhan_2020_0705'` | Map 上显示哪一场（必须是字符串，不能是数组） |
 | `EXPORT_ALL / EXPORT_PER_EVENT / EXPORT_SUMMARY` | `true`（主脚本）/ `false`（判读台） | 导出开关 |
 
-> 来源：`code/pseudo_labels1.js:10-128`、`code/temp_version_notes.md:87-118`、`code_accuraccy/validation_review_说明.md:151-202`。
+> 来源：`code/pseudo_labels1.js:10-128`、`code/temp_version_notes.md` 第 4 节「全局参数表（pseudo_labels1）」、`code_accuraccy/validation_review_说明.md:151-202`。
 
 ### 7.3 单场窗口特例（事件表内的逐事件覆盖）
 
@@ -297,10 +297,10 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | 单元测试 / 测试框架 | **不存在**（无测试目录、无测试文件、无测试框架配置） | 全目录检索 |
 | CI / CD | **不存在**（无 `.github/`、无 `.gitlab-ci.yml`、无 Jenkinsfile 等） | 全目录检索 |
 | 构建步骤 | **无**（GEE 脚本在浏览器内直接执行；Python 脚本标准库直跑） | — |
-| 语法检查 | 项目文档提到 JS 改动会做 `node --check` 静态检查 | `code/temp_version_notes.md:422, 531`、`code_accuraccy/validation_review_说明.md:265` |
+| 语法检查 | 项目文档提到 JS 改动会做 `node --check` 静态检查 | `code/temp_version_notes.md` 第 5 节【改动N】小节的「静态校验」段、`code_accuraccy/validation_review_说明.md:265` |
 | 部署 | 无需部署；产出物是 Google Drive 上的 CSV 与 `csvdata/` 下的本地 CSV | `code/pseudo_labels1.js:1498-1535` |
 | 质量保证机制（替代测试） | ① 脚本加载时自动跑越界自检；② 每事件自动打 `s2_qc_flag`；③ `DIAG=true` 时输出逐景偏移 / 阈值敏感性 / 参考期基线 / 目视图层；④ 要求口径类改动必须重跑并逐字段比对 Summary 表 | `code/pseudo_labels1.js:1393-1414, 1237-1328`、`AGENTS.md:33` |
-| 可复现性 | 抽样种子固定 + 判识流程无随机项 → 同代码重跑得到同一套标签（项目文档记录了多次独立运行互证，差异 ≤6.7e-16） | `code/temp_version_notes.md:578` |
+| 可复现性 | 抽样种子固定 + 判识流程无随机项 → 同代码重跑得到同一套标签（项目文档记录了多次独立运行互证，差异 ≤6.7e-16） | `code/temp_version_notes.md` 第 7 节结论 21「重跑是确定的」 |
 
 **项目自定的验证纪律**（`AGENTS.md:29-33`）：
 - GEE 脚本必须到 Code Editor 实跑，确认无报错且 `print` 输出合理；导出要在 Tasks 面板点 RUN 才真正执行。
@@ -322,7 +322,7 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | Google Earth Engine Code Editor | `ee`、`Map`、`ui`、`Export`、`print` 全局对象 | 由 GEE 平台提供，无需本地安装 |
 | Python | **仅标准库**：`argparse`、`csv`、`math`、`sys`、`unicodedata`、`collections`、`pathlib`、`statistics` | `code_accuraccy/validation_accuracy_report.py:30-44`；`AGENTS.md:31` 明确「只依赖标准库，不要引入 pandas / numpy」 |
 | Python 版本 | 代码使用 `from __future__ import annotations`、`list[Point]` 内建泛型标注 → **要求 Python ≥ 3.9**（标注为推断，**未确认**项目实际使用的版本） | `code_accuraccy/validation_accuracy_report.py:30, 172` |
-| 本地可选工具 | `node --check` 仅用于 JS 语法静态检查 | `code/temp_version_notes.md:422` |
+| 本地可选工具 | `node --check` 仅用于 JS 语法静态检查 | `code/temp_version_notes.md` 第 5 节【改动N】小节的「静态校验」段 |
 | Obsidian | `weeklyReport/` 为 Obsidian 库，含 `docx-exporter` 社区插件（`manifest.json` / `main.js`） | `weeklyReport/.obsidian/community-plugins.json`、`weeklyReport/.obsidian/plugins/docx-exporter/` |
 
 ### 9.3 GEE 平台数据依赖版本（代码内固定）
@@ -380,12 +380,12 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | 必须 | `validation_accuracy_report.py` 对 `new_label = -1`（掩膜未定）的点会**静默排除**，尚未显式单列统计；这些点既不能算对也不能算错，使用前需补齐 | `code_accuraccy/validation_review_说明.md:243, 266` |
 | 必须 | `flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45` **仍按旧候选规则计算**（不含改动34 的 4 个约束），更新前不能作为新阈值的稳定性依据 | `code_accuraccy/validation_review_说明.md:267`、`csvdata/pseudo_labels/事件筛查与训练集划分2.md:54` |
 | 必须 | 【改动34】的 4 个 dB 阈值只是 IW GRD **参考初值，尚未按本区标定**；标定后需同步回 `code/pseudo_labels1.js` 并重跑得到 `Summary12` | `code_accuraccy/validation_review_说明.md:270`、`code/pseudo_labels1.js:86-91` |
-| 高 | 目视核查首轮**未通过**：`2022_0627` / `2023_0618` 的 DIAG 截图显示洪涝像元呈孤立散点、无连片淹没面，且 MNDWI 合成里云多 | `code/temp_version_notes.md:579, 597` |
-| 高 | 需要新增 `n_sar_cand_px` 列，以区分「S2 把像元挡掉」（可修）与「过境时水已退」（物理限制） | `code/temp_version_notes.md:602` |
-| 中 | S2 窗口可能「一景都没有」→ 脚本会在 `s2Idx.select(...)` 处报错终止（既有行为，**未加判空分支**） | `code/temp_version_notes.md:603` |
-| 中 | 事件定义待回查：`Wuhan_2025_0607` 的雨量注记写的是「6 月 21 日数据」，而事件窗口是 6 月 7–9 日；`Wuhan_2017_0608` 的 `rain_ref_mm` 为空 | `code/temp_version_notes.md:567, 606` |
-| 中 | `2016_0601` 是唯一 C 类（`s1_valid_cover=0.469`）；**单纯延长 `postEnd` 无效**，因为 S1 后时相合成是「最早一景 + 8 天」 | `code/temp_version_notes.md:605` |
-| 中 | 分类不平衡：少量事件正类仅 200~500 像元，合并训练需按事件配额或分层加权 | `code/temp_version_notes.md:607` |
+| 高 | 目视核查首轮**未通过**：`2022_0627` / `2023_0618` 的 DIAG 截图显示洪涝像元呈孤立散点、无连片淹没面，且 MNDWI 合成里云多 | `code/temp_version_notes.md` 第 7 节结论 22、第 5 节【改动32】 |
+| 高 | 需要新增 `n_sar_cand_px` 列，以区分「S2 把像元挡掉」（可修）与「过境时水已退」（物理限制） | `code/temp_version_notes.md` 第 8 节待办·高「新增 `n_sar_cand_px` 列」 |
+| 中 | S2 窗口可能「一景都没有」→ 脚本会在 `s2Idx.select(...)` 处报错终止（既有行为，**未加判空分支**） | `code/temp_version_notes.md` 第 8 节待办·中「S2 窗口可能"一景都没有"」 |
+| 中 | 事件定义待回查：`Wuhan_2025_0607` 的雨量注记写的是「6 月 21 日数据」，而事件窗口是 6 月 7–9 日；`Wuhan_2017_0608` 的 `rain_ref_mm` 为空 | `code/temp_version_notes.md` 第 8 节待办·中「事件定义回查」 |
+| 中 | `2016_0601` 是唯一 C 类（`s1_valid_cover=0.469`）；**单纯延长 `postEnd` 无效**，因为 S1 后时相合成是「最早一景 + 8 天」 | `code/temp_version_notes.md` 第 8 节待办·低「修覆盖不足事件」 |
+| 中 | 分类不平衡：少量事件正类仅 200~500 像元，合并训练需按事件配额或分层加权 | `code/temp_version_notes.md` 第 8 节待办·中「分类不平衡处理」 |
 | 注意 | 判读点开销：当前跑三场，上限 3 × 140 = 420 点（实际更少）；扩到全量 18 场最多 2520 点 | `code_accuraccy/validation_review_说明.md:268` |
 | 注意 | 若 `stratifiedSample` 报某层点数不足，需把 `REVIEW_POINTS_PER_STRATUM` 对应层上限调低 | `code_accuraccy/validation_review_说明.md:269` |
 | 方法学 | 验证必须**按事件留出**；同一事件的像元高度空间自相关，随机划分会显著高估精度 | `csvdata/pseudo_labels/事件筛查与训练集划分2.md:216` |
