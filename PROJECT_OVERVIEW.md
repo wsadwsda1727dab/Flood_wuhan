@@ -12,7 +12,7 @@
 
 **一句话简介**：在 Google Earth Engine 上用 Sentinel-1 变化检测 + Sentinel-2 光学证据，为武汉市 2016–2025 年的 18 场暴雨洪涝事件生成洪涝伪标签与分层随机森林训练样本，并通过人工目视判读对伪标签做独立精度验证。
 
-> 依据：`AGENTS.md`（项目速览）、`code/temp_version_notes.md` 第 1 节「目标与范围」、`weeklyReport/伪标签验证.md:1-30`（研究流程定位）。
+> 依据：`AGENTS.md`（项目速览）、`code/temp_version_notes.md` 第 1 节「目标与范围」、`weeklyReport/伪标签精度验证.md:1-30`（研究流程定位）。
 
 ---
 
@@ -109,7 +109,7 @@ c2/                                  ← 项目根目录（已确认）
 **重要工程细节**（已在项目文档中被反复强调）：
 - GEE 影像算术（如 `subtract`）会丢失影像属性（连 `system:time_start` 一起丢），需要显式 `.set()` 带过去（`code/temp_version_notes.md` 第 10 节「附：过程中形成的两个"教训"」第 1 条）。
 - `Export.table.toDrive` 不写 `selectors` 时列序不可靠，历史上出现过表头与取值错位（`code/temp_version_notes.md` 第 10 节「附：过程中形成的两个"教训"」第 2 条）。
-- Sentinel-1 GRD 切片填充值是很大的负值（不是 0），`mask()` 看不见，必须用 `dropFill` 显式掩掉（`code/pseudo_labels1.js:81-84, 493-498`）。
+- Sentinel-1 GRD 切片填充值是很大的负值（不是 0），`mask()` 看不见，必须用 `dropFill` 显式掩掉（`code/pseudo_labels1.js:89-91, 500-505`）。
 
 ### 4.2 模块 B：验证点生成与目视判读（`code_accuraccy/`）
 
@@ -152,7 +152,7 @@ c2/                                  ← 项目根目录（已确认）
 | **验证入口 2** | `code_accuraccy/validation_review.js` | 浏览器内逐点盲判 + 录入 reference/confidence + 导出判读 CSV |
 | **报告入口** | `code_accuraccy/validation_accuracy_report.py` | `python code_accuraccy/validation_accuracy_report.py` |
 | 事件定义 | `code/pseudo_labels1.js` 中的 `EVENTS` 数组（第 186–433 行） | 20 条 = 18 场暴雨 + 2 场「零暴雨」对照（`isControl`，默认不跑） |
-| 汇总表列定义 | `SUMMARY_SELECTORS`（`code/pseudo_labels1.js:137-158`） | 41 列 |
+| 汇总表列定义 | `SUMMARY_SELECTORS`（`code/pseudo_labels1.js:144-165`） | 41 列 |
 | 样本表列定义 | `SAMPLE_SELECTORS`（`code/pseudo_labels1.js:131-136`） | 18 列 |
 | 事件表原始来源 | `doc/2016_2025.docx` | 暴雨时段起止、影响区、雨量（二进制 Word 文档，本次仅确认存在与用途，未解析内容） |
 
@@ -189,7 +189,7 @@ c2/                                  ← 项目根目录（已确认）
 3. 判读 **Flood (1) / Non-Flood (0) / Uncertain (-1)** 并选 `confidence`（2 高可信 / 1 一般可信 / 0 无法判断），记录后自动跳下一点；点错可「撤销上一点」。
 4. 判读完点「导出判读结果 CSV」，再到 Tasks 面板点 RUN 导出到 Drive；同时可「打印已判 JSON」留备份。
 
-> **重要限制**：Code Editor 每次 Run 都会重置脚本状态，判读结果只存在内存里 —— 必须在一次会话内判完并导出；判不完按事件分批（用 `RUN_EVENT_NAMES` 点名几场）。来源：`code_accuraccy/validation_review_说明.md:223-234`、`code_accuraccy/validation_review.js:1669-1670`。
+> **重要限制**：Code Editor 每次 Run 都会重置脚本状态，判读结果只存在内存里 —— 必须在一次会话内判完并导出；判不完按事件分批（用 `RUN_EVENT_NAMES` 点名几场）。来源：`code_accuraccy/validation_review_说明.md:223-234`、`code_accuraccy/validation_review.js:1392-1394`。
 
 ### 6.4 运行本地精度报告（Python）
 
@@ -376,18 +376,18 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 
 | 级别 | 事项 | 来源 |
 | --- | --- | --- |
-| 必须 | `validation_review.js` 当前版本**未在 GEE 实跑**，只做了 `node --check` 静态检查；因涉及阈值口径，必须在 Code Editor Run 并核对 Console 分层像元数 | `code_accuraccy/validation_review_说明.md:265` |
-| 必须 | `validation_accuracy_report.py` 对 `new_label = -1`（掩膜未定）的点会**静默排除**，尚未显式单列统计；这些点既不能算对也不能算错，使用前需补齐 | `code_accuraccy/validation_review_说明.md:243, 266` |
-| 必须 | `flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45` **仍按旧候选规则计算**（不含改动34 的 4 个约束），更新前不能作为新阈值的稳定性依据 | `code_accuraccy/validation_review_说明.md:267`、`csvdata/pseudo_labels/事件筛查与训练集划分2.md:54` |
-| 必须 | 【改动34】的 4 个 dB 阈值只是 IW GRD **参考初值，尚未按本区标定**；标定后需同步回 `code/pseudo_labels1.js` 并重跑得到 `Summary12` | `code_accuraccy/validation_review_说明.md:270`、`code/pseudo_labels1.js:86-91` |
+| 必须 | `validation_review.js` 当前版本**未在 GEE 实跑**，只做了 `node --check` 静态检查；因涉及阈值口径，必须在 Code Editor Run 并核对 Console 分层像元数 | `code_accuraccy/validation_review_说明.md:282` |
+| 必须 | `validation_accuracy_report.py` 对 `new_label = -1`（掩膜未定）的点会**静默排除**，尚未显式单列统计；这些点既不能算对也不能算错，使用前需补齐 | `code_accuraccy/validation_review_说明.md:407, 430` |
+| 必须 | `flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45` **仍按旧候选规则计算**（不含改动34 的 4 个约束），更新前不能作为新阈值的稳定性依据 | `code_accuraccy/validation_review_说明.md:209, 431`、`csvdata/pseudo_labels/事件筛查与训练集划分2.md:54` |
+| 必须 | 【改动34】的 4 个 dB 阈值只是 IW GRD **参考初值，尚未按本区标定**；标定后需同步回 `code/pseudo_labels1.js` 并重跑得到 `Summary12` | `code_accuraccy/validation_review_说明.md:270`、`code/pseudo_labels1.js:95-98` |
 | 高 | 目视核查首轮**未通过**：`2022_0627` / `2023_0618` 的 DIAG 截图显示洪涝像元呈孤立散点、无连片淹没面，且 MNDWI 合成里云多 | `code/temp_version_notes.md` 第 7 节结论 22、第 5 节【改动32】 |
 | 高 | 需要新增 `n_sar_cand_px` 列，以区分「S2 把像元挡掉」（可修）与「过境时水已退」（物理限制） | `code/temp_version_notes.md` 第 8 节待办·高「新增 `n_sar_cand_px` 列」 |
 | 中 | S2 窗口可能「一景都没有」→ 脚本会在 `s2Idx.select(...)` 处报错终止（既有行为，**未加判空分支**） | `code/temp_version_notes.md` 第 8 节待办·中「S2 窗口可能"一景都没有"」 |
 | 中 | 事件定义待回查：`Wuhan_2025_0607` 的雨量注记写的是「6 月 21 日数据」，而事件窗口是 6 月 7–9 日；`Wuhan_2017_0608` 的 `rain_ref_mm` 为空 | `code/temp_version_notes.md` 第 8 节待办·中「事件定义回查」 |
 | 中 | `2016_0601` 是唯一 C 类（`s1_valid_cover=0.469`）；**单纯延长 `postEnd` 无效**，因为 S1 后时相合成是「最早一景 + 8 天」 | `code/temp_version_notes.md` 第 8 节待办·低「修覆盖不足事件」 |
 | 中 | 分类不平衡：少量事件正类仅 200~500 像元，合并训练需按事件配额或分层加权 | `code/temp_version_notes.md` 第 8 节待办·中「分类不平衡处理」 |
-| 注意 | 判读点开销：当前跑三场，上限 3 × 140 = 420 点（实际更少）；扩到全量 18 场最多 2520 点 | `code_accuraccy/validation_review_说明.md:268` |
-| 注意 | 若 `stratifiedSample` 报某层点数不足，需把 `REVIEW_POINTS_PER_STRATUM` 对应层上限调低 | `code_accuraccy/validation_review_说明.md:269` |
+| 注意 | 判读点开销：当前跑三场，上限 3 × 140 = 420 点（实际更少）；扩到全量 18 场最多 2520 点 | `code_accuraccy/validation_review_说明.md:432` |
+| 注意 | 若 `stratifiedSample` 报某层点数不足，需把 `REVIEW_POINTS_PER_STRATUM` 对应层上限调低 | `code_accuraccy/validation_review_说明.md:433` |
 | 方法学 | 验证必须**按事件留出**；同一事件的像元高度空间自相关，随机划分会显著高估精度 | `csvdata/pseudo_labels/事件筛查与训练集划分2.md:216` |
 | 方法学 | `Summary10` 与 `Summary11` 的标签定义不同（相对下降规则 vs 事件前非水+事件后为水+相对下降），**不能直接 concat 或混合训练** | `csvdata/pseudo_labels/事件筛查与训练集划分2.md:236` |
 | 方法学 | `high_flood_share` 上升 ≠ 标签质量提升（Medium 降幅更大导致占比自然上升，High 绝对像元数同时下降 59.3%） | `csvdata/pseudo_labels/事件筛查与训练集划分2.md:237` |
@@ -401,8 +401,8 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | --- | --- | --- |
 | 1 | 代码引用了**不存在的输入文件** | `code_accuraccy/validation_accuracy_report.py:51` 定义 `SUMMARY_CSV = BASE_DIR / "Wuhan_2016_2025_validation_points_Summary.csv"`，但 `csvdata/validation_points/` 下**没有这个文件**。脚本对此有兜底（`AREA_FALLBACK` 内置表 + `try/except` 打印 warn），因此面积加权 OA 会退回到仅 3 个事件的内置权重。 |
 | 2 | 文档引用了**不存在的脚本** | `csvdata/validation_points/伪标签精度验证_数据核查.md:18, 172` 提到 `code_accuraccy/validation_accuracy.js`（GEE 端精度计算），但该文件**不在当前目录中**。 |
-| 3 | 两个验证脚本的抽样参数不完全一致 | `validation_points.js` 为 `POINTS_PER_CLASS = 300`，`validation_review.js` 为 `200`（`code_accuraccy/validation_review.js:55`），`REVIEW_POINTS_PER_STRATUM` 合计可达 140 点/场。文档已记录历史成因，但三个数字并存易误读。 |
-| 4 | `validation_review_说明.md` 与实际文件内容存在版本差 | 说明文档第 5 节称「判读脚本的旧显示块已移除」，实际 `validation_review.js:1606-1614` 保留了一段被注释说明的 6/7 节（导出开关全为 `false`），属说明性保留，非缺陷。 |
+| 3 | 两个验证脚本的抽样参数不完全一致 | `validation_points.js` 为 `POINTS_PER_CLASS = 300`；`validation_review.js` 的 `POINTS_PER_CLASS`（原 `200`）已随【改动37】移除（`code_accuraccy/validation_review.js:66`），现只按 `REVIEW_POINTS_PER_STRATUM` 分层配额抽样，`REVIEW_POINTS_PER_STRATUM` 合计可达 140 点/场。文档已记录历史成因，但三个数字并存易误读。 |
+| 4 | `validation_review_说明.md` 与实际文件内容存在版本差 | 说明文档第 5 节称「判读脚本的旧显示块已移除」，实际 `validation_review.js:1363-1367` 保留了一段被注释说明的 6/7 节（导出开关全为 `false`），属说明性保留，非缺陷。 |
 | 5 | 事件条数在文档中并存 18 / 19 / 20 三个数字 | 18 = 当前暴雨事件数；19 = 【改动28】合并前；20 = `EVENTS` 数组总条数（18 暴雨 + 2 对照）。读文档时需注意语境。 |
 | 6 | `weeklyReport/跑者数据与伤病关联分析报告.md` 与本项目主题无关 | 该文件位于 `weeklyReport/` 内，主题为跑步与伤病关联分析，**未确认**是否属本仓库的正式内容。 |
 
