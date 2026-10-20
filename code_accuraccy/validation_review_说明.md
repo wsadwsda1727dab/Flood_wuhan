@@ -1,6 +1,6 @@
 # `validation_review.js` 说明文档
 
-> 对应版本：2026-10-20（含【改动34】Sentinel-1 预/后向散射约束 + 五层分层抽样、【改动35】判读点抽样尺度与统计尺度分离、【改动37】移除训练样本点链、【改动38】移除汇总表链、【改动39】移除 S2 后窗越界尾段诊断、【改动40】判读点抽样 `dropNulls: false` 修复第 3/4 层被整层剔除、【改动41】判读点抽样尺度由 10 m 改为 30 m、【改动42】`VH_PRE_NONWATER_TH` 由 −20 dB 标定为 −23 dB）
+> 对应版本：2026-10-20（含【改动34】Sentinel-1 预/后向散射约束 + 分层抽样、【改动35】判读点抽样尺度与统计尺度分离、【改动37】移除训练样本点链、【改动38】移除汇总表链、【改动39】移除 S2 后窗越界尾段诊断、【改动40】判读点抽样 `dropNulls: false` 修复第 3/4 层被整层剔除、【改动41】判读点抽样尺度由 10 m 改为 30 m、【改动42】`VH_PRE_NONWATER_TH` 由 −20 dB 标定为 −23 dB、【改动44】新增第 5 层「漏检候选」并把判读事件换成 `2016_0630` + `2023_0719`）
 > 同目录相关文件：`validation_points.js`（第一阶段，导出样本点 CSV）、`阈值合理性与精度评价流程.md`（整体链路与原则）
 > 精度核算：原本地脚本 `validation_accuracy_report.py` 已于 2026-10-20 删除，改为读判读 CSV 现算，口径见 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md`。
 
@@ -11,7 +11,7 @@
 `validation_review.js` 是**伪标签精度评价的第二阶段**——「目视判读工作台」，在 Google Earth Engine Code Editor 里运行。它做四件事：
 
 1. 复用第一部分的标签生成代码，为每个事件算出证据图层；
-2. 生成一批**待判读点**（本版本按五层分层抽样）；
+2. 生成一批**待判读点**（本版本按六层分层抽样）；
 3. 提供面板，让你逐点看遥感证据、盲判 Flood / Non-Flood / Uncertain，并记录 `confidence`；
 4. 把判读结果导出成 CSV（`reference`），供本地精度核算使用（口径见 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md`；原 `validation_accuracy_report.py` 已删除）。
 
@@ -31,16 +31,16 @@
 
 | 位置 | 内容 | 来源 |
 | --- | --- | --- |
-| 开头注释 | 与 `validation_points.js` 的 6 处差异 | 【第二阶段】【改动34】【改动37】【改动38】【改动39】【改动40】 |
+| 开头注释 | 与 `validation_points.js` 的 8 处差异 | 【第二阶段】【改动34】【改动37】【改动38】【改动39】【改动40】【改动41】【改动44】 |
 | 0 节 | 研究区（`wuhan` 资产） | 复用 |
 | 1 节 | 全局参数：判识阈值、抽样参数、窗口参数、去偏/云掩膜/诊断开关 | 复用 + 【改动34】4 个新阈值；【改动38】删质控三阈值与 `SUMMARY_SELECTORS`；【改动39】删 `S2_TAIL_DIAG` |
-| 2 节 | 事件表 `EVENTS`（20 条 = 18 场暴雨 + 2 场对照）、`RUN_EVENT_NAMES`、`VALIDATION_EVENT_NAMES` | 复用 + 【改动34】tune/valid 留出 |
+| 2 节 | 事件表 `EVENTS`（20 条 = 18 场暴雨 + 2 场对照）、`RUN_EVENT_NAMES`、`VALIDATION_EVENT_NAMES` | 复用 + 【改动34】tune/valid 留出；【改动44】`RUN_EVENT_NAMES` 换成 `2016_0630` + `2023_0719` |
 | 3 节 | 时间窗口工具函数（北京时 → UTC、事件前/后窗口推导） | 复用 |
 | 4 节 | `buildEvent(ev)`：单场事件的 SAR + 光学标签与证据（4.1–4.16） | 复用 + 【改动34】4.10b；**【改动37】4.13 训练样本链已移除**；**【改动38】4.12、4.14、4.15 汇总链已移除**；**【改动39】4.5b 尾段诊断已移除** |
 | 5 节 | 逐时段执行 `RUN_EVENT_NAMES` 过滤 + `EVENTS_TO_RUN.map(buildEvent)` | 复用 + 【改动37】去掉 `allSamples` 合并与 3 条样本 print；【改动38】去掉 `summaryFC` 与汇总 print |
 | 6 节 | 旧的「显示」块（伪标签图层）——**已移除**，避免暴露答案 | 【第二阶段】 |
 | 7 节 | 导出开关——【改动37】删 `EXPORT_ALL` / `EXPORT_PER_EVENT`；【改动38】删 `EXPORT_SUMMARY`，**本文件已无任何 Export** | 【第二阶段】+【改动37】+【改动38】 |
-| 第二部分 7.1 | 判读点表：按五层分层抽样（【改动35】抽样尺度与统计尺度分离；【改动40】`dropNulls: false`；【改动41】尺度由 10 m 改 30 m） | 【改动34】重写 +【改动35】+【改动40】+【改动41】 |
+| 第二部分 7.1 | 判读点表：按六层分层抽样（【改动35】抽样尺度与统计尺度分离；【改动40】`dropNulls: false`；【改动41】尺度由 10 m 改 30 m；【改动44】新增第 5 层 `missed_optical`） | 【改动34】重写 +【改动35】+【改动40】+【改动41】+【改动44】 |
 | 第二部分 7.2 | 判读状态与图层管理（证据图层、点图层、高亮） | 【第二阶段】 |
 | 第二部分 7.3 | 判读面板与按钮 | 【第二阶段】+【改动34】增补显示 |
 | 第二部分 7.3 之后 | 记录 `record()`、撤销、`leanRecords()`、导出 CSV/底表（源码里没有独立小节标题） | 【第二阶段】+【改动34】导出列 |
@@ -104,8 +104,13 @@ vv_diff < -4.0  ∧  vh_diff < -3.5          ← 原规则（相对下降）
 | 2   | `medium_flood` | Medium Flood（判洪 + 窗口内无 S2，`conf_flood = 1`）   |
 | 3   | `cut_prewater` | **版本差异层**：约束前判洪、约束后不判洪，原因是事件前已是水（未过 `pre` 条件） |
 | 4   | `cut_postweak` | **版本差异层**：同上，原因是事件前非水、事件后不够暗（未过 `post` 条件）    |
+| 5   | `missed_optical` | **【改动44】漏检候选层**：SAR 六条全过、非永久水、坡度合格，但窗口内有 S2 且光学判为非水（`MNDWI ≤ MNDWI_THRESHOLD`）；最终 `label = −1`（掩膜未定） |
 
 差异层按**最终标签**定义（旧规则 `label = 1` 且新规则 `label ≠ 1`），也就是 Summary10 比 Summary11 多出、随后被删掉的那些像元；候选层面被删但本来就不进标签的像元（永久水体、坡度不合格）不在其中，不需要判读。
+
+**第 5 层（【改动44】）为什么必须有**：第 0–4 层全都在 `knownArea` 或 `droppedByNewThr` 里，而「SAR 六条全过 + 有 S2 + 光学判非水」这类像元两者都不属于——`floodUsed` 要为真需光学背书（High）或无 S2（Medium），`nonFloodUsed` 要 `sarFlood01.not()`，此处的 `sarFlood01` 恒为真，于是 `knownArea = false`、`label = −1`。它在六层之外**一个点都抽不到**，这正是「前三层 135 点在四阈值放宽到极限时预测零变化」以及「`Recall` 恒为 1.000」的构造性原因。定义见 `validation_review.js` 的 `missedByOptical`。
+
+> **口径限定**：第 5 层问的是「S2 判非水是否否掉了真淹没」，**不是**「SAR 变化本身不成立」。后者属旧规则漏检，与【改动34】四条绝对阈值无关。若该层判读真洪占比高，矛盾在光学项（`MNDWI_THRESHOLD` / S2 时相），不在四条 S1 阈值——不要用它去推 `VV_POST_WATER_TH` 的松紧。
 
 配套导出三条标签：
 
@@ -117,17 +122,20 @@ vv_diff < -4.0  ∧  vh_diff < -3.5          ← 原规则（相对下降）
 
 `old_label` 的推导依据：改动34 没有改动非洪涝那套条件（`sarStable` / `s2Valid` / `opticalNonWater` / `nonPermanentWater` / 坡度），所以**非旧洪涝像元在新旧两版的判定完全相同**，于是 `old_label = new_label`，仅在"旧规则判洪"处强制为 1。这样导出的 CSV 直接就能做「前后 2×2」对比，不需要跑第二遍脚本。
 
-### 3.3 判读点改成五层分层抽样（7.1 节重写）
+### 3.3 判读点改成分层抽样（7.1 节重写；【改动44】起六层）
 
 | | 旧写法 | 新写法 |
 | --- | --- | --- |
 | 点位来源 | `r.samples`（训练样本，按 `label` 抽 0 / 1 两类） | `r.reviewImage`（特征栈 + 分层带 + 新旧标签 + 阈值输入） |
-| 分层依据 | 伪标签正负两类 | 五层（见 3.2） |
-| 每层点数 | `REVIEW_POINTS_PER_CLASS = 200` | `REVIEW_POINTS_PER_STRATUM`：20 / 20 / 20 / 40 / 40 |
+| 分层依据 | 伪标签正负两类 | 六层（见 3.2） |
+| 每层点数 | `REVIEW_POINTS_PER_CLASS = 200` | `REVIEW_POINTS_PER_STRATUM`：20 / 20 / 20 / 40 / 40 / 40 |
 | 抽样尺度 `scale` | `SAMPLE_SCALE = 100 m` | **`REVIEW_SAMPLE_SCALE`**（【改动35】，原 10 m；【改动41】改为 30 m） |
 | 能否抽到"被删像元" | **不能**（这类点在新标签下已不是洪涝） | 能，第 3、4 层就是（但**必须**配【改动40】的 `dropNulls: false`，否则被整层剔除，见 3.9） |
+| 能否抽到"漏检候选" | **不能**（六层之外，`label = −1`） | 能，第 5 层就是（【改动44】新增，同样必须配 `dropNulls: false`） |
 
 每层点数取 `min(该层上限, 该层实际像元数)`，像元不足自动少抽；某层像元数为 0 时该层不出点。各层像元数在 Console 里以频率直方图打印。
+
+> **【改动44】配额未定稿**：40 / 40 / 40 只是临时值。30 m 下各层格数比 10 m 少一个量级，`min()` 会静默少抽，所以必须先跑一次分层诊断看 `stratumHist` 的实际格数，再定最终配额（原来设想的每层 100 点是否填得满，取决于这次诊断）。
 
 **【改动35】抽样尺度与统计尺度分离**：判读点的 `scale` 从 `SAMPLE_SCALE`(100 m) 换成 `REVIEW_SAMPLE_SCALE`（`validation_review.js:1504`；【改动38】前的行号是 1723，【改动40】前的行号是 1486）。动机是不用统计尺度的百来米聚合值——用 100 m 会把点位落到格中心、取值是格内聚合值，双方测的不是同一块地（100 m 格在武汉纬度东西向仅约 86 m，一个格子里装的是上百个像元的均值或多数类）。
 
@@ -157,13 +165,14 @@ Wuhan_2025_0607  最新年度
 
 其余事件 `split = 'tune'`，用于标定 4 个阈值。**`Wuhan_2020_0705` 故意留在调参集**——第一轮已判读的 401 点（`csvdata/validation_points/Wuhan_validation_reference_20200705.csv`）会用于调参，同一场不能再当独立验证。
 
-**当前默认只跑三场**（`RUN_EVENT_NAMES`）：`2020_0705`、`2021_0823`、`2023_0618`。在这三场里 `split` 自动分成：
+**当前默认只跑两场**（`RUN_EVENT_NAMES`，【改动44】2026-10-20 定）：`2016_0630`、`2023_0719`。两场都在上面的 `VALIDATION_EVENT_NAMES` 里，因此本轮的 `split` 全是 `valid`：
 
 | 事件 | `split` | 说明 |
 | --- | --- | --- |
-| `Wuhan_2020_0705` | `tune` | 大面积，调参主力，可叠加第一轮 401 点 |
-| `Wuhan_2023_0618` | `tune` | 雨量大但面积很小，最可疑 |
-| `Wuhan_2021_0823` | `valid` | 独立验证——本次只有这一场，结论先当**方向性判断** |
+| `Wuhan_2016_0630` | `valid` | 面积最大（77.02 km²）、S2 有效覆盖仅 0.231（光学最弱）、本次新增面积占总新增 26.6% → SAR 信号可与光学隔离，最利于检验第 5 层与四条 S1 阈值 |
+| `Wuhan_2023_0719` | `valid` | 面积最小（2.80 km²）、per100 最低（1.72）、S2 覆盖 1.00（光学最好）→ 用于判「低面积是真漏检还是正确剔除」 |
+
+**第 2 轮那三场不再引用**：`2020_0705`（tune 140 点）、`2023_0618`（tune 120 点）已用于调参，`2021_0823`（valid 125 点）已被【改动42】的留一事件三折消耗，三者都不再是独立样本。**`Wuhan_2021_0823` 是否从 `VALIDATION_EVENT_NAMES` 移出待定**：留着不影响新两场的 `split`，只是它那 125 个旧点的标号仍是 `valid`。
 
 扩跑时把 `RUN_EVENT_NAMES` 改回 `null`（全量 18 场），或写成 `var RUN_EVENT_NAMES = tuneEventNames();`（只跑调参集）；`VALIDATION_EVENT_NAMES` 名单不用改，未参与判读的事件不会出现在判读台里。
 
@@ -189,7 +198,7 @@ Wuhan_2025_0607  最新年度
 
 **保留的内容**：`SAMPLE_SCALE`(100 m，统计尺度)、`SAMPLE_SEED`（判读点抽样仍在用）、4.10b 分层带与 `stratumHist`、4.11 特征栈、`reviewImage`、`counts` 与 4.12/4.14/4.15 统计（这三段在【改动38】又被整体删除，见 3.7）、第二部分整段。
 
-**对判读零影响**：判读点走的是 `buildReviewPoints()`（`classBand:'stratum'` 五层、`scale = REVIEW_SAMPLE_SCALE`、`seed = SAMPLE_SEED`），与 4.13 的样本链互不引用——`samples` 在删除前除导出与 print 外无任何消费者。判读点的数量、位置、顺序与随机性都不变。
+**对判读零影响**：判读点走的是 `buildReviewPoints()`（`classBand:'stratum'` 分层、`scale = REVIEW_SAMPLE_SCALE`、`seed = SAMPLE_SEED`），与 4.13 的样本链互不引用——`samples` 在删除前除导出与 print 外无任何消费者。判读点的数量、位置、顺序与随机性都不变。
 
 **注意**：当时 `summary.sample_count` 列恒为 `null`（【改动38】后该列已不存在）。若与 `csvdata/pseudo_labels/Wuhan_2016_2025_Flood_Event_Summary11.csv` 对比，该列是真值缺失，不要当成 0 参与统计。
 
@@ -297,7 +306,7 @@ Wuhan_2025_0607  最新年度
 | `:1380-1381` | 7.1 导语注释：同步尺度表述（原写"10 m = 判读尺度"） |
 | `:1497-1504` | `stratifiedSample` 的 `scale` 注释：同步，并写明 30 m 聚合值不能直接用于标定像元级阈值 |
 
-**未改动**：`SAMPLE_SCALE = 100 m`（统计尺度）、特征栈、四个 S1 阈值（`VV_PRE_NONWATER_TH` / `VH_PRE_NONWATER_TH` / `VV_POST_WATER_TH` / `VH_POST_WATER_TH` 的值一个没动）、两个相对阈值、配额表 `REVIEW_POINTS_PER_STRATUM`（仍 20/20/20/40/40）、五层定义、`REVIEW_SELECTORS` 29 列、判读面板与导出逻辑。该常量的两个使用点（`:1121` 分层像元直方图、`:1504` 判读点抽样）都是引用变量，随常量联动，无硬编码 10。
+**未改动**：`SAMPLE_SCALE = 100 m`（统计尺度）、特征栈、四个 S1 阈值（`VV_PRE_NONWATER_TH` / `VH_PRE_NONWATER_TH` / `VV_POST_WATER_TH` / `VH_POST_WATER_TH` 的值一个没动）、两个相对阈值、配额表 `REVIEW_POINTS_PER_STRATUM`（当时仍 20/20/20/40/40；【改动44】后为六层 20/20/20/40/40/40）、当时五层定义、`REVIEW_SELECTORS` 29 列、判读面板与导出逻辑。该常量的两个使用点（`:1121` 分层像元直方图、`:1504` 判读点抽样）都是引用变量，随常量联动，无硬编码 10。
 
 **连带影响**：
 
@@ -310,6 +319,44 @@ Wuhan_2025_0607  最新年度
 > **【改动43】（2026-10-20）已按后者处置**：主脚本 `SAMPLE_POINT_SCALE` 由 10 m 改为 30 m，与本节 `REVIEW_SAMPLE_SCALE = 30` 对齐，口径冲突消解——判读结果可回填主脚本，【改动42】的 `VH_pre = −23` 也是在 30 m 口径下标定的。**新增的未决项**：该常量只作用于主脚本 4.13 的 `stratifiedSample`，若后续有人把它改回 10 m，本节代价原样复活。
 
 **验证情况**：**未在 GEE 实跑**；本次会话两个执行后端均不可用，`node --check` 未能执行。改动是一处数值赋值，语法风险为零，行号已逐条 `ops_grep` 复核。
+
+### 3.11 【改动44】新增第 5 层「漏检候选」+ 判读事件换成 `2016_0630` + `2023_0719`
+
+**触发**：`csvdata/validation_points/判读结果分析与阈值评价_20261019.md` 第 10 节把「缺漏检点抽样」列为四个缺口之一——385 个判读点里 `new_label = 0 且 reference = 1` 的点为 **0**，所以 `Recall` 恒为 1.000 是抽样设计的产物，不是标签质量。原文档设想的补法是「新规则判非洪、但相对阈值成立」的一层，但该定义在本脚本里是**空集**（见下）。
+
+**关键订正（原先设想的漏检层定义不成立）**：`oldSarFlood01` 末尾已 `.and(s1Valid)`（`validation_review.js` 4.10b），所以 `oldSarFlood01 ∧ ¬s1Valid`（"SAR 相对下降成立但缺 S1 有效观测"）恒为空集。这个错误定义原也写在 `code_accuraccy/阈值合理性与精度评价流程.md` 的同名小节里，已同轮订正。
+
+**实际采用的第 5 层定义**（`validation_review.js` 的 `missedByOptical`）：
+
+```js
+var missedByOptical = sarFlood01.and(s2Valid).and(opticalFlood.not())
+  .and(nonPermanentWater).and(lowSlope).unmask(0);
+```
+
+即「SAR 六条全过（含 `s1Valid`）∧ 窗口内有 S2 ∧ 光学判非水 ∧ 非永久水 ∧ 坡度合格」。这类像元 `floodUsed` 与 `nonFloodUsed` 都不成立 → `knownArea = false` → 最终 `label = −1`（掩膜未定）。
+
+**改动**：
+
+| 位置 | 改动 |
+| --- | --- |
+| 文件头差异清单 | 新增第 8 条【改动44】（含空集勘误） |
+| 4.10b 注释块 | 补第 5 层含义、`label = −1` 推导、构造性漏检说明、空集勘误 |
+| `samplable` | `knownArea.or(droppedByNewThr)` → 再 `.or(missedByOptical)` |
+| `stratum` 链 | 新增 `.where(missedByOptical, 5)`（放在最后，避免被 0 覆盖） |
+| `stratumHist` print | 文案补 `/ 5=【改动44】漏检·SAR说水光学说干` |
+| `REVIEW_STRATA` | 新增 `{value: 5, key: 'missed_optical', …}` |
+| `REVIEW_POINTS_PER_STRATUM` | 新增 `missed_optical: 40`（六层合计 200 点/场；**配额未定稿**，待 30 m 分层诊断后定） |
+| 分层图层配色 | `max: 4` → `5`，palette 追加 `'000000'` |
+| `RUN_EVENT_NAMES` | 三场 → 两场（`2016_0630` / `2023_0719`） |
+| 面板用法文案 | 五层 → 六层，点明「后三层是判断新阈值松紧的关键」 |
+
+**未改动**：`SAMPLE_SCALE = 100`、`REVIEW_SAMPLE_SCALE = 30`、四条阈值、`REVIEW_SELECTORS` 27 列、`buildReviewPoints` 逻辑（配额表多一项后自动生效）。
+
+**静态校验**：`node --check code_accuraccy/validation_review.js` 通过；`node --check code/pseudo_labels1.js` 同样通过（该文件本轮未改）。
+
+**验收步骤**：GEE Run → Console 看「判读分层像元数」是否出现键 `5`；再看「请求点数 vs 实际返回点数」两数是否相等（判据是相等，不是等于某个具体数）。若第 5 层格数为 0，属该场没有此类像元，不是 bug。
+
+**未在 GEE 实跑**（AI 无法执行 GEE 脚本）。
 
 ---
 
@@ -352,7 +399,7 @@ Wuhan_2025_0607  最新年度
 | `SAMPLE_SEED` | 20260927 | 抽样随机种子；【改动37】起只用于判读点抽样（7.1） |
 | `dropNulls`（`stratifiedSample` 调用参数） | `false` | **【改动40】必须显式传 `false`**：`reviewImage` 的 `label` 波段在 `knownArea` 外无值，而第 3/4 层按构造就在 `knownArea` 外；用默认的 `dropNulls: true` 会把这两层整层丢掉（实测 140 → 60） |
 | `POINTS_PER_CLASS` | — | **【改动37】已删除**（原为训练样本每类上限 200） |
-| `RUN_EVENT_NAMES` | 三场（`2020_0705` / `2021_0823` / `2023_0618`） | 本次只跑这三场，判读点上限 3 × 140 = 420；`null` = 全量 18 场，也可用 `tuneEventNames()` 只跑调参集 |
+| `RUN_EVENT_NAMES` | 两场（`2016_0630` / `2023_0719`，【改动44】） | 本轮只跑这两场，判读点上限 2 × 200 = 400（六层配额 20/20/20/40/40/40，实际更少）；`null` = 全量 18 场，也可用 `tuneEventNames()` 只跑调参集 |
 | `VIEW_EVENT_NAME` | `Wuhan_2020_0705` | 第一阶段遗留参数，本脚本只声明、未使用（判读台按 `REVIEW_EVENTS` 渲染事件） |
 
 ### 4.4 判读台配置
@@ -365,7 +412,7 @@ Wuhan_2025_0607  最新年度
 | `REVIEW_JUMP_ZOOM` | 15 | 跳到某点时的缩放级别 |
 | `REVIEW_AUTO_NEXT` | `true` | 记录后自动跳下一点 |
 | `EXPORT_BLANK_SHEET` | `false` | `true` = 另导一份线下判读底表（`reference` / `confidence` 留空） |
-| `REVIEW_POINTS_PER_STRATUM` | 20 / 20 / 20 / 40 / 40 | 【改动34】每场每层判读点上限（合计最多 140 点/场） |
+| `REVIEW_POINTS_PER_STRATUM` | 20 / 20 / 20 / 40 / 40 / 40 | 【改动34】每场每层判读点上限；【改动44】新增第 5 层（合计最多 200 点/场，配额待 30 m 分层诊断后定稿） |
 
 ### 4.5 导出列（`REVIEW_SELECTORS` + `reference` / `confidence`）
 
@@ -373,7 +420,7 @@ Wuhan_2025_0607  最新年度
 | --- | --- |
 | `point_id` / `event_id` | `事件名_system:index` / 事件名 |
 | `split` | `tune`（调参集）/ `valid`（独立验证集） |
-| `stratum` / `stratum_name` | 分层值（0–4）/ 分层键名 |
+| `stratum` / `stratum_name` | 分层值（0–5）/ 分层键名 |
 | `pseudo_label` / `new_label` | 新规则标签（`pseudo_label` 为兼容旧脚本的别名） |
 | `old_label` / `old_sar_flood` | 旧规则标签 / 旧 SAR 候选 |
 | `longitude` / `latitude` | 点位坐标 |
@@ -413,14 +460,16 @@ Wuhan_2025_0607  最新年度
 
 ---
 
-## 7. 与 `validation_points.js` 的 6 处差异
+## 7. 与 `validation_points.js` 的 8 处差异
 
 1. 顶部加本说明（第一阶段脚本没有）；
 2. 【改动37】样本 CSV 的导出与整条训练样本点链已移除；【改动38】汇总表链（`counts` / 4.14 / 4.15 / `summaryFC` / `EXPORT_SUMMARY`）也移除，本文件**已无任何 `Export`**，唯一出口是判读结果 CSV 按钮；改前是三个开关全 `false`；
 3. 去掉旧的「显示」块（它会把伪标签图层叠到 Map 上，违反文档第十六节）；
 4. `buildEvent` 返回值多带一张 S2 RGB 真彩色合成（只用于判读显示，不影响抽样）；【改动34】又增加了 `reviewImage` / `stratum` / `stratumHist` / `roi`；
 5. 【改动34】同步 4 个新阈值与 6 项 `sarFlood`；新增分层带与新/旧标签；判读点改从 `reviewImage` 上按层抽样；按事件留出 `tune` / `valid`；
-6. 【改动40】7.1 的 `stratifiedSample` 显式传 `dropNulls: false`，否则第 3/4 层被整层剔除（原因见 3.9）；`buildReviewPoints` 返回值随之带出请求点数。
+6. 【改动40】7.1 的 `stratifiedSample` 显式传 `dropNulls: false`，否则第 3/4 层被整层剔除（原因见 3.9）；`buildReviewPoints` 返回值随之带出请求点数；
+7. 【改动41】`REVIEW_SAMPLE_SCALE` 由 10 m 改为 30 m（只动判读点抽样与 4.10b 直方图，统计尺度与特征栈不动；原因见 3.10）；
+8. 【改动44】新增第 5 层 `missed_optical`（漏检候选，`label = −1`），把「SAR 说水、光学说干」这类此前抽不到的点纳入抽样；同时 `RUN_EVENT_NAMES` 换成 `2016_0630` + `2023_0719`（原因见 3.11）。
 > 因此**判读点不再与 `validation_points.js` 导出的样本表一一对应**——"被新约束删掉"的像元在训练样本里根本不存在，必须单独抽。
 
 ---
@@ -429,16 +478,17 @@ Wuhan_2025_0607  最新年度
 
 | 级别 | 事项 | 说明 |
 | --- | --- | --- |
-| 必须 | 本版本**未在 GEE 实跑** | 只做了静态检查（`node --check`）；改动涉及阈值口径，必须在 Code Editor Run 并核对 Console 的分层像元数 |
+| 必须 | 本版本**未在 GEE 实跑** | 只做了静态检查（`node --check`）；改动涉及阈值口径与新增分层，必须在 Code Editor Run 并核对 Console 的分层像元数与「请求点数 vs 实际返回点数」 |
 | 必须 | `new_label = -1`（掩膜未定）必须单列 | 原 `validation_accuracy_report.py` 会静默丢点，脚本已于 2026-10-20 删除；改由现算，仍须把该层单独报数 |
 | 必须 | ~~`flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45`~~ | **【改动38】这三个字段已随汇总表链删除**（它们原本就还是旧候选规则，未随【改动34】更新）；新阈值的稳定性请用判读结果按层统计，不要再用这三个数 |
-| 注意 | 判读点的开销 | 当前跑三场，判读点上限 3 × 140 = 420 个（实际更少，受各层像元数限制）；每场多一次频率直方图请求。若扩到全量 18 场则最多 2520 点，判不完就按事件分批 |
+| 注意 | 判读点的开销 | 当前跑两场，判读点上限 2 × 200 = 400 个（实际更少，受各层像元数限制）；每场多一次频率直方图请求。若扩到全量 18 场则最多 3600 点，判不完就按事件分批 |
 | 注意 | 某层点数不足的报错 | 若 `stratifiedSample` 报该层点数不够，把 `REVIEW_POINTS_PER_STRATUM` 对应层上限调低 |
 | 必须 | **【改动40】未在 GEE 实跑** | `dropNulls: false` 的修复只有逻辑推演与 Console 现象吻合，未实跑验证；Run 后必须核对新增的「请求点数 vs 实际返回点数」print 两数相等（10 m 口径下 `2020_0705` 预期 `140 → 140`；30 m 下数字可能更低，判据是相等而非等于 140）。另 `dropNulls` 默认 `true` 未核对 GEE 官方文档 |
 | ~~必须~~ → **已解决** | **【改动41】30 m 抽样与阈值标定口径冲突** | **【改动43】已决（2026-10-20）**：接受"按 30 m 口径标定"，主脚本 `SAMPLE_POINT_SCALE` 由 10 m 改为 30 m 与之对齐。原冲突：【改动34】四个阈值是像元级阈值，而 30 m 下导出的 `VV_pre` / `VH_pre` / `VV_post_c` / `VH_post_c` 是格内聚合值。**剩余风险**：主脚本若被改回 10 m，冲突复活 |
 | 注意 | **【改动41】未在 GEE 实跑** | 只改了一处常量（`:78`），未 Run 验证；Run 后应确认分层像元直方图计数随 30 m 明显下降、`【改动40】` 的两数仍相等 |
-| 注意 | 4 个阈值是否仍是未标定初值 | 【改动42】已标定 `VH_PRE_NONWATER_TH`（−20 → −23）并同步回 `code/pseudo_labels1.js`；其余三条（−15 / −16 / −22）仍是参考初值。**主脚本尚未按新阈值重跑**，`Summary11` 仍是当前最新全量结果，`Summary12` 待产出 |
-| 注意 | 判读抽样仍缺两类点 | 差异层每层 40 点不足以支撑五参数标定；且没有"新规则判非洪、但相对阈值成立"的层，因此 Recall 恒为 1.000 是结构性的、无法评价漏检率。补强方案见 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md` 第 10 节 |
+| 注意 | 4 个阈值是否仍是未标定初值 | 【改动42】已标定 `VH_PRE_NONWATER_TH`（−20 → −23）并同步回 `code/pseudo_labels1.js`；其余三条（−15 / −16 / −22）仍是参考初值。主脚本已按 −23 全量重跑，`Summary12` 已产出（18 场面积相对 `Summary11` 全部上升，总面积 202.54 → 291.77 km²），`Summary11` 已不是最新结果 |
+| 注意 | 判读抽样缺漏检点 | 差异层每层 40 点不足以支撑五参数标定；**【改动44】已补上一类**：新增第 5 层 `missed_optical`（"SAR 说水、光学说干"），该类此前一个点都抽不到，是 `Recall` 恒为 1.000 的构造性原因。**仍缺**："SAR 相对下降本身不成立"那一类漏检（旧规则漏检，与四条绝对阈值无关），补强方案见 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md` 第 10 节 |
+| 必须 | **【改动44】未在 GEE 实跑** | 新增第 5 层后必须先跑一次分层诊断，核对 `stratumHist` 里第 5 层格数是否 ≥ 配额；若为 0，说明该场没有"SAR 说水、光学说干"的像元（本身也是有信息量的结论），不要当成脚本 bug |
 
 ---
 
@@ -457,3 +507,4 @@ Wuhan_2025_0607  最新年度
 | 2026-10-14 | 【改动41】判读点抽样尺度由 10 m 改为 30 m：`REVIEW_SAMPLE_SCALE`（`validation_review.js:78`）由 `10` 改为 `30`，用于 7.1 判读点抽样与 4.10b 分层像元计数；统计尺度 `SAMPLE_SCALE`(100 m)、特征栈与四个 S1 阈值均未动。触发原因是 10 m 下点位过多、单场判读台跑不出来。代价：30 m 下 `VV_pre` / `VH_pre` / `VV_post_c` / `VH_post_c` 等列为聚合值，不能直接用于标定像元级阈值。本文档 3.3 节、3.10 节（新增）、2 节结构表、4.3 节与 8 节同步更新 |
 | 2026-10-20 | 【改动42】`VH_PRE_NONWATER_TH` 由 −20 dB 标定为 −23 dB（与 `code/pseudo_labels1.js` 逐条同步）。依据 351 个判读有效点：`VH_pre` 在差异层上 AUC 0.504（13 个候选变量里最低）、单参数扫描 F1 .677 → .758、留一事件三折全正、−20 → −23 翻转的 33 点全部落在 `cut_prewater` 层而前三层 145 点 0 变化。其余三条绝对阈值（−15 / −16 / −22）按证据不足保持原值。本文档 3.1 节（阈值表、`sarFlood` 规则式、标定说明）与 4.1 节同步更新；判读点链、五层定义、配额、导出列均未动 |
 | 2026-10-20 | 【改动43】主脚本 `code/pseudo_labels1.js` 的 `SAMPLE_POINT_SCALE` 由 10 m 改为 30 m，与本文件 `REVIEW_SAMPLE_SCALE = 30` 对齐，【改动41】的"30 m 标定不能回填主脚本"冲突消解。本文件代码无改动，仅 3.10 节与 8 节的相关条目由"未决"改为"已决"并记录剩余风险 |
+| 2026-10-20 | 【改动44】新增第 5 层 `missed_optical`（漏检候选：SAR 六条全过、有 S2、光学判非水、非永久水、坡度合格，最终 `label = −1`），把 `Recall` 恒为 1.000 的结构性缺口补上一类；`samplable` 加 `.or(missedByOptical)`，`stratum` 链加 `.where(missedByOptical, 5)`，`REVIEW_STRATA` 加第 5 项，配额 `REVIEW_POINTS_PER_STRATUM` 改 20/20/20/40/40/40（合计 200 点/场，待分层诊断定稿），分层图层配色 `max` 改 5 并追加黑色。同时 `RUN_EVENT_NAMES` 由第 2 轮三场（`2020_0705` / `2021_0823` / `2023_0618`）换成 `Wuhan_2016_0630` + `Wuhan_2023_0719`。勘误：原先设想的漏检层 `oldSarFlood01 ∧ ¬s1Valid` 因 `oldSarFlood01` 已带 `.and(s1Valid)` 而恒为空集，`code_accuraccy/阈值合理性与精度评价流程.md:147` 同此误。四阈值、`SAMPLE_SCALE`、`REVIEW_SAMPLE_SCALE`、`REVIEW_SELECTORS` 均未动。本文档 3.2 / 3.3 / 3.5 / 2 节结构表 / 4.3 / 4.4 / 4.5 / 8 节与 3.11 节（新增）同步更新。**未在 GEE 实跑**，仅 `node --check` 通过 |

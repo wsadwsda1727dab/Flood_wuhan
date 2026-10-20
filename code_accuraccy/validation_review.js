@@ -6,7 +6,7 @@
 // 本文件由 code/validation_points.js 复制而来，事件表、阈值、窗口与它一致；
 // 【改动34】之前，前半部分（0~5 节与导出开关）与它完全相同，判读点与
 // validation_points.js 导出的 CSV 一一对应。引入【改动34】后这条对应关系被有意打破：
-// 本文件同步了 Sentinel-1 预/后向散射约束，并把判读点改成按 5 层分层抽样
+// 本文件同步了 Sentinel-1 预/后向散射约束，并把判读点改成按分层抽样（【改动44】起六层）
 // （含"版本差异层"——约束前判洪、约束后被删的像元，这类点在训练样本里根本不存在）。
 // 与 validation_points.js 的差异（文件内均以「【第二阶段】」「【改动34】」「【改动37】」标注）：
 //   1) 顶部加本说明；
@@ -27,6 +27,11 @@
 //   7)【改动41】判读点抽样尺度 REVIEW_SAMPLE_SCALE 由 10 m 改为 30 m（10 m 下点位过多、
 //      单场判读台跑不出来）。只作用于 7.1 的判读点抽样与 4.10b 的分层像元计数；
 //      统计尺度 SAMPLE_SCALE(100 m)、特征栈与四个阈值均未动。
+//   8)【改动44】新增第 5 层 `missed_optical`（漏检候选：SAR 六条全过、非永久水、坡度合格，
+//      但窗口内有 S2 且光学判为非水）。此前这类像元既不在 knownArea 也不在 droppedByNewThr，
+//      六层里抽不到一个点，是「Recall 恒为 1.000」的构造性原因。同时订正了原先设想的
+//      漏检层定义 `oldSarFlood01 ∧ ¬s1Valid`——它与 `oldSarFlood01` 自带的 `.and(s1Valid)`
+//      互斥，是空集。
 // 文件末尾追加第二部分：判读面板 + Reference 录入 + 判读结果导出。
 // ============================================================================
 // 0. 研究区
@@ -465,10 +470,24 @@ var EVENTS = [
 //   （依据下面的 VALIDATION_EVENT_NAMES）。验证集只有一场，代表性有限——结论先当"方向性判断"，
 //   要扩到全量时把这一行改回 `var RUN_EVENT_NAMES = null;`，或点名更多事件
 //   （例如 `var RUN_EVENT_NAMES = tuneEventNames();` 只跑调参集）。
+// 【改动44】第 3 轮：换成两场**尚未判读过**的事件（2016_0630 + 2023_0719，2026-10-20 定）。
+//   第 2 轮那三场不能再引：2020_0705（tune 140 点）、2023_0618（tune 120 点）已用于调参，
+//   2021_0823（valid 125 点）已被【改动42】的留一事件三折消耗，三者都不再是独立样本。
+//   选这两场的理由（数据条件互补）：
+//     2016_0630 —— 面积最大（77.02 km²）、S2 有效覆盖仅 0.231（光学最弱）、本次新增面积
+//                  占总新增 26.6%，SAR 信号可与光学隔离，最利于检验第 5 层与四条 S1 阈值；
+//     2023_0719 —— 面积最小（2.80 km²）、per100 最低（1.72）、S2 覆盖 1.00（光学最好），
+//                  用于判定"低面积究竟是真漏检还是正确剔除"。
+//   两场都在 VALIDATION_EVENT_NAMES 里，因此本轮产出的点 split 全是 valid；第 2 轮那 385 点
+//   在这轮分析里按 tune 处理（其中 2021_0823 的 125 点虽在旧 CSV 里记为 valid，但已被留一
+//   事件三折消耗，不能再当独立验证）。**注意**：`Wuhan_2021_0823` 目前仍留在下面的
+//   VALIDATION_EVENT_NAMES 里，是否移出待定；不移出只是让它的旧点标号仍是 valid，
+//   不影响本轮两场的 split。
+//   注意：本轮先只当**分层诊断**跑（看 30 m 下 stratumHist 各层格数能否填满配额，再定配额），
+//   配额定稿前不要开始正式目视判读。
 var RUN_EVENT_NAMES = [
-  'Wuhan_2020_0705',
-  'Wuhan_2021_0823',
-  'Wuhan_2023_0618'
+  'Wuhan_2016_0630',
+  'Wuhan_2023_0719'
 ];
 
 // 【改动34】按事件留出：独立验证集（**不参与调阈值**）
@@ -480,8 +499,10 @@ var RUN_EVENT_NAMES = [
 //   注意：`Wuhan_2020_0705` **不**放进验证集——第一轮已判读的 401 点
 //     （csvdata/validation_points/Wuhan_validation_reference_20200705.csv）会用于调参，
 //     同一场不能再当独立验证。
-//   本次只跑三场（见上面的 RUN_EVENT_NAMES），因此实际参与判读的 valid 只有
-//     `Wuhan_2021_0823`；名单里其余事件在将来扩跑时自动生效，不需要改这里。
+//   【改动44】本轮只跑两场（见上面的 RUN_EVENT_NAMES：2016_0630 / 2023_0719），两者都在
+//     本名单里，因此实际参与判读的 valid 就是这两场；名单里其余事件在将来扩跑时自动生效。
+//     `Wuhan_2021_0823` 是否移出本名单待定：它在第 2 轮是唯一 valid 场（125 点），已被
+//     【改动42】的留一事件三折消耗，不再是独立验证；留着不影响新两场的 split，只是旧点标号不变。
 var VALIDATION_EVENT_NAMES = [
   'Wuhan_2016_0630',
   'Wuhan_2017_0824',
@@ -1067,6 +1088,12 @@ function buildEvent(ev) {
   //     2 = Medium Flood（新规则判洪 + 窗口内无 S2，conf_flood = 1）
   //     3 = 版本差异层：约束前判洪、约束后不判洪，原因 = 事件前已经是水（未过 pre 条件）
   //     4 = 版本差异层：约束前判洪、约束后不判洪，原因 = 事件前非水、但事件后不够暗（未过 post 条件）
+  //     5 =【改动44】漏检候选层：SAR 六条件（两条相对阈值 + 四条绝对阈值）全部成立、非永久水、
+  //         坡度合格，但窗口内有 S2 且光学判为非水（MNDWI ≤ MNDWI_THRESHOLD）。这类像元最终
+  //         **被掩掉（label = −1 掩膜未定）而不是记 0**，见下面的推导。它是"SAR 说水、光学
+  //         说干"，是当前标签唯一还有系统性漏检风险的来源；单独拆出来才能估出真正的 Recall。
+  //         【改动44】之前第 5 层不存在：这类像元既不在 knownArea（label 无值），也不在
+  //         droppedByNewThr，五个层里**一个都抽不到**——这正是 "Recall 恒为 1.000" 的构造性原因。
   //   差异层按**最终标签**定义（旧规则 label = 1 且新规则 label ≠ 1），也就是 Summary10 比
   //   Summary11 多出来（随后被删掉）的那些像元；候选层面被删、但本来就不进标签的像元
   //   （永久水体、坡度不合格、光学/时相不满足）不在其中，也不需要判读。
@@ -1074,6 +1101,9 @@ function buildEvent(ev) {
   //     第 3 层若多数被判为"事件前确实已有水体" → 排除旧水是对的，pre 阈值可以保留甚至收紧；
   //     第 4 层若大量被判为真洪水        → post 阈值（-16 / -22）偏严，砍掉了真实淹没。
   //   （新规则 ⊂ 旧规则：新增的 4 个条件只会删像元、不会新增像元，所以"新判洪但旧不判"不存在。）
+  //   【改动44】勘误：先前设想的漏检层定义 `oldSarFlood01 ∧ ¬s1Valid`（"SAR 相对下降成立
+  //   但缺 S1 有效观测"）是**空集**——`oldSarFlood01`（见下方 var oldSarFlood01 定义）末尾
+  //   已 `.and(s1Valid)`，再与 `s1Valid.not()` 相交恒为空。第 5 层因此改用下面的"光学否决"定义。
   // ----------------------------------------------------------
   var oldSarFlood01 = vv_diff.lt(VV_THRESHOLD).and(vh_diff.lt(VH_THRESHOLD))
     .unmask(0).and(s1Valid);
@@ -1091,14 +1121,31 @@ function buildEvent(ev) {
   var cutPreWater = droppedByNewThr.and(preLooksWater);
   var cutPostWeak = droppedByNewThr.and(preLooksWater.not());
 
-  // 可抽样区 = 新规则有标签的像元 ∪ 被删掉的像元
+  // 【改动44】第 5 层：漏检候选层（SAR 说水、光学说干）
+  //   条件 = SAR 六条全过（sarFlood01 已含 s1Valid）∧ 非永久水 ∧ 坡度合格
+  //          ∧ 窗口内有 S2 观测 ∧ 光学判为非水（MNDWI ≤ MNDWI_THRESHOLD，即 ¬opticalFlood）
+  //   这类像元最终 label 被掩掉而非记为 0：
+  //     floodUsed = highFlood01 ∨ mediumFlood01，前者要 opticalFlood、后者要 s2Valid.not()，
+  //     这里两者都不满足 → floodUsed = false；而 nonFloodUsed 要 sarStable01 ∧ sarFlood01.not()，
+  //     这里 sarFlood01 = true → 也被否掉。于是 knownArea = false。
+  //   所以【改动44】之前它们既不在 knownArea，也不在 droppedByNewThr（后者要 oldFloodUsed，
+  //   oldHigh 要光学、oldMedium 要无 S2），此前的五层一个都抽不到 —— 这解释了「前三层 135 点
+  //   在阈值放宽到极限时预测零变化」，也解释了 Recall 恒为 1.000。
+  //   【口径说明】这一层问的是"S2 判非水是否否掉了真淹没"，而不是"SAR 变化本身不成立"
+  //   （后者是旧规则的漏检，与【改动34】四条绝对阈值无关）。若该层判读后真洪占比高，
+  //   说明矛盾在光学项（MNDWI_THRESHOLD / S2 时相），而不是四条 S1 阈值。
+  var missedByOptical = sarFlood01.and(s2Valid).and(opticalFlood.not())
+    .and(nonPermanentWater).and(lowSlope).unmask(0);
+
+  // 可抽样区 = 新规则有标签的像元 ∪ 被删掉的像元 ∪【改动44】漏检候选层
   //   （其余像元是 Unknown：前后缺 SAR 观测、永久水体、坡度不合格等，不参与判读）
-  var samplable = knownArea.or(droppedByNewThr);
+  var samplable = knownArea.or(droppedByNewThr).or(missedByOptical);
   var stratum = ee.Image(0)
     .where(cutPreWater, 3)
     .where(cutPostWeak, 4)
     .where(highFlood01, 1)
     .where(mediumFlood01, 2)
+    .where(missedByOptical, 5)
     .updateMask(samplable)
     .rename('stratum');
   // 新标签（1 = 洪涝 / 0 = 非洪涝 / -1 = 掩膜未定）
@@ -1121,7 +1168,8 @@ function buildEvent(ev) {
     scale: REVIEW_SAMPLE_SCALE, bestEffort: true, maxPixels: 1e10
   });
   print('【改动34】' + ev.name + ' 判读分层像元数'
-    + '（0=非洪涝 / 1=High洪涝 / 2=Medium洪涝 / 3=版本差异·前已是水 / 4=版本差异·后不够暗）:',
+    + '（0=非洪涝 / 1=High洪涝 / 2=Medium洪涝 / 3=版本差异·前已是水 / 4=版本差异·后不够暗'
+    + ' / 5=【改动44】漏检·SAR说水光学说干）:',
     stratumHist);
 
   // ----------------------------------------------------------
@@ -1379,8 +1427,9 @@ print('完成时段数: ' + results.length
 //      '.geo'），拿回来无法落图；所以判读点位直接在内存里按层抽（geometries: true），
 //      用同一套 SAMPLE_SEED；【改动35】抽样尺度改用 REVIEW_SAMPLE_SCALE，不再用统计尺度
 //      SAMPLE_SCALE；【改动41】该常量由 10 m 改为 30 m（10 m 下点数过多、单场跑不出来）。
-//      【改动34】抽法从"按 label 抽正负两类"改成"按 5 层分层抽"（见 7.1）：
-//      非洪涝 / High Flood / Medium Flood / 版本差异·前已是水 / 版本差异·后不够暗，
+//      【改动34】抽法从"按 label 抽正负两类"改成"按分层抽"（见 7.1；【改动44】起六层）：
+//      非洪涝 / High Flood / Medium Flood / 版本差异·前已是水 / 版本差异·后不够暗 /
+//      漏检候选·SAR说水光学说干，
 //      每层上限见 REVIEW_POINTS_PER_STRATUM（像元不足时取实际数量）。
 //   2) 开卷偏差：文档第十六节要求正式判读**不显示伪标签**。这里默认不加载 label /
 //      High Flood / Medium Flood 图层，验证点统一成一种颜色，也不显示
@@ -1403,24 +1452,31 @@ var REVIEW_AUTO_NEXT = true;         // 记录后自动跳到下一点
 var EXPORT_BLANK_SHEET = false;      // true = 另导一份"线下判读底表"（reference / confidence 留空）
 
 // ---- 【改动34】判读分层与每层点数 ----
-//   值 = buildEvent 里 stratum 带的像元值；五层含义见 4.10b。
+//   值 = buildEvent 里 stratum 带的像元值；六层含义见 4.10b。
 //   3、4 两层是"约束前判洪、约束后被删"的差异层，是判断阈值松紧的关键，点数给得多一些。
-//   0/1/2 三层用于算 Precision / Recall，测洪涝类的全局水平即可，不必多抽。
-//   总点数 ≈ 事件数 × Σ(下面五个数)，全量 18 场就是 18 × 140 = 最多 2520 点；
+//   【改动44】新增第 5 层（漏检候选：SAR 六条全过、非永久水、坡度合格，但窗口内有 S2 且
+//     光学判为非水）——它补上了"SAR 说水、光学说干"这个此前抽不到的格子，Recall 才有意义。
+//   0/1/2 三层用于算 Precision / Recall 的总体水平，对四阈值不敏感，不必多抽。
+//   总点数 ≈ 事件数 × Σ(下面六个数)，全量 18 场就是 18 × 200 = 最多 3600 点；
 //   单次会话判不完就按事件分批跑（用 RUN_EVENT_NAMES 点名几场）。
 var REVIEW_STRATA = [
   {value: 0, key: 'nonflood',     name: '非洪涝（新规则未判洪）'},
   {value: 1, key: 'high_flood',   name: 'High Flood（判洪 + 光学背书）'},
   {value: 2, key: 'medium_flood', name: 'Medium Flood（判洪 + 无 S2）'},
   {value: 3, key: 'cut_prewater', name: '版本差异·事件前已是水（被删）'},
-  {value: 4, key: 'cut_postweak', name: '版本差异·前非水但后不够暗（被删）'}
+  {value: 4, key: 'cut_postweak', name: '版本差异·前非水但后不够暗（被删）'},
+  {value: 5, key: 'missed_optical', name: '漏检候选·SAR说水但光学说干'}
 ];
+// 【改动44】3/4/5 三层各 40 点：三层的信号都直接指向阈值或光学项，配额对齐。
+//   要先在 GEE 里跑一次 30 m 分层诊断（stratumHist）确认各层格数能填满再定最终配额——
+//   `min(上限, 该层格数)` 会静默少抽，30 m 下格数比 10 m 少一个量级。
 var REVIEW_POINTS_PER_STRATUM = {
   nonflood: 20,
   high_flood: 20,
   medium_flood: 20,
   cut_prewater: 40,
-  cut_postweak: 40
+  cut_postweak: 40,
+  missed_optical: 40
 };
 function stratumName(v) {
   var x = Number(v);
@@ -1434,7 +1490,7 @@ var STRATUM_NAMES = ee.List(REVIEW_STRATA.map(function (s) { return s.key; }));
 
 // 判读结果导出的列 = 判读底表列 + reference / confidence
 //   split        = tune（调参集）/ valid（独立验证集），按事件留出，见第 2 节
-//   stratum      = 抽样分层（0/1/2/3/4，分析时用它分组）
+//   stratum      = 抽样分层（0/1/2/3/4/5，分析时用它分组）
 //   stratum_name = 分层名（服务端按 stratum 值映射，便于直接读表）
 //   new_label    = 【改动34】新规则标签（1 = 洪涝 / 0 = 非洪涝 / -1 = 掩膜未定）
 //   old_label    = 旧规则标签（同口径），new_label 与 old_label 的差异就是这次加约束的净效应
@@ -1456,7 +1512,7 @@ var REVIEW_JRC = ee.Image('JRC/GSW1_4/GlobalSurfaceWater')
   .select('occurrence').clip(DEFAULT_ROI);
 
 // ---------------------------------------------------------------------------
-// 7.1【改动34】判读点表：按"五层"分层抽样，不再是"按 label 抽正负两类"
+// 7.1【改动34】判读点表：按"分层"抽样（【改动44】起六层），不再是"按 label 抽正负两类"
 //   旧写法只从训练样本里取 label = 0 / 1，**永远抽不到"版本差异层"**（约束前判洪、
 //   约束后被删的像元）——而那一层恰恰是判断阈值松紧的关键，Summary11 面积 -65.6% 是否
 //   合理就靠它。这里直接从 r.reviewImage（含 stratum 带）上抽，每层点数取
@@ -1550,7 +1606,7 @@ results.forEach(function (r) {
   REVIEW_REQUESTED.push(built.requested);
 });
 
-print('判读事件与候选点数（每场最多 5 层 × 每层上限，见 REVIEW_POINTS_PER_STRATUM）：',
+print('判读事件与候选点数（每场最多 6 层 × 每层上限，见 REVIEW_POINTS_PER_STRATUM）：',
   ee.Dictionary.fromLists(REVIEW_EVENTS, REVIEW_COUNTS));
 // 【改动40】请求数 vs 实际返回数：两者不等说明抽样影像里有波段掩膜把候选点筛掉了。
 print('【改动40】请求点数 vs 实际返回点数（不等即有波段掩膜在筛点）：',
@@ -1653,8 +1709,10 @@ function renderEventLayers() {
   // 【改动34】自查模式（REVIEW_HIDE_PSEUDO = false）才显示分层图层，盲判时不给提示
   if (!REVIEW_HIDE_PSEUDO) {
     evidenceLayers.push(addLayerKeep(r.stratum,
-      {min: 0, max: 4, palette: ['d9d9d9', '2166ac', '92c5de', 'f4a582', 'b2182b']},
-      r.name + ' 判读分层（0非洪涝/1High/2Medium/3差异·前已是水/4差异·后不够暗）', false));
+      {min: 0, max: 5,
+        palette: ['d9d9d9', '2166ac', '92c5de', 'f4a582', 'b2182b', '000000']},
+      r.name + ' 判读分层（0非洪涝/1High/2Medium/3差异·前已是水/4差异·后不够暗/5漏检·SAR水光学干）',
+      false));
   }
 
   pointLayers.push(addLayerKeep(pointsOf(reviewState.evIdx), {color: REVIEW_POINT_COLOR},
@@ -1886,9 +1944,10 @@ panel.add(lastLabel);
 panel.add(ui.Label(
   '用法：选事件 → 逐点看 S1 / S2 / DEM / JRC 证据 → 点 Flood / Non-Flood / Uncertain '
   + '记录并自动跳下一点。\n'
-  + '【改动34】每场点按 5 层抽样：非洪涝 / High Flood / Medium Flood / '
-  + '版本差异·事件前已是水（被删）/ 版本差异·后不够暗（被删）；点名顺序即按此层序，'
-  + '后两层是判断新阈值松紧的关键。面板里的 VV_pre / VH_pre 就是"事件前是否已是水"的依据。\n'
+  + '【改动34】每场点按分层抽样（【改动44】起六层）：非洪涝 / High Flood / Medium Flood / '
+  + '版本差异·事件前已是水（被删）/ 版本差异·后不够暗（被删）/ 漏检候选·SAR说水但光学说干；'
+  + '点名顺序即按此层序，后三层是判断新阈值松紧的关键。面板里的 VV_pre / VH_pre 就是'
+  + '"事件前是否已是水"的依据。\n'
   + '事件按 tune（调参集）/ valid（独立验证集）留出，导出的 split 列会带上。\n'
   + '结果存在内存里，判读完务必点"导出判读结果 CSV"（再到 Tasks 面板点 RUN）。'
   + '重跑脚本会清空全部记录，请一次会话内判完（判不完就按事件分批跑）。',
