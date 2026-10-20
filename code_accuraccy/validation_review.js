@@ -51,7 +51,7 @@ var VH_THRESHOLD = -3.5;       // VH 后-前 下降超过 3.5 dB
 //   小水面它一概挡不住。
 //   注意：这 4 个值是 IW GRD 的**参考初值**，未按本区标定；标定它们正是本判读台这一轮的任务。
 var VV_PRE_NONWATER_TH = -15;  // 事件前 VV > -15 dB 才视为非水
-var VH_PRE_NONWATER_TH = -20;  // 事件前 VH > -20 dB 才视为非水
+var VH_PRE_NONWATER_TH = -23;  // 事件前 VH > -23 dB 才视为非水【改动42】
 var VV_POST_WATER_TH = -16;    // 事件后 VV < -16 dB 才视为水体
 var VH_POST_WATER_TH = -22;    // 事件后 VH < -22 dB 才视为水体
 var MNDWI_THRESHOLD = 0.2;     // 光学水体阈值
@@ -1439,7 +1439,7 @@ var STRATUM_NAMES = ee.List(REVIEW_STRATA.map(function (s) { return s.key; }));
 //   new_label    = 【改动34】新规则标签（1 = 洪涝 / 0 = 非洪涝 / -1 = 掩膜未定）
 //   old_label    = 旧规则标签（同口径），new_label 与 old_label 的差异就是这次加约束的净效应
 //   old_sar_flood= 旧 SAR 候选（只看 vv_diff / vh_diff 两项，1/0），用于区分"候选层面被删"与"标签层面被删"
-//   pseudo_label = 等价于 new_label，保留旧列名，供 validation_accuracy_report.py 直接读
+//   pseudo_label = 等价于 new_label，保留旧列名，供本地精度核算直接读
 //   VV_pre / VH_pre / VV_post_c / VH_post_c = 4 个新阈值的直接输入，便于事后复核与标定
 var REVIEW_SELECTORS = [
   'point_id', 'event_id', 'split', 'stratum', 'stratum_name',
@@ -1796,7 +1796,7 @@ function undoLast() {
   lastLabel.setValue('已撤销：' + id);
 }
 
-// 精简备份（只留判读必需字段，便于贴回 validation_accuracy.js）
+// 精简备份（只留判读必需字段，便于贴回后续精度核算）
 function leanRecords() {
   var arr = [];
   reviewState.order.forEach(function (id) {
@@ -1860,7 +1860,7 @@ var btnUncertain = ui.Button({label: 'Uncertain (-1)', style: {color: 'orange'},
 }});
 var btnUndo = ui.Button({label: '撤销上一条', onClick: undoLast});
 var btnPrint = ui.Button({label: '打印已判 JSON', onClick: function () {
-  print('判读结果（精简 JSON，可贴到 validation_accuracy.js 的 REFERENCE_INLINE）：',
+  print('判读结果（精简 JSON，判读备份用）：',
     JSON.stringify(leanRecords()));
 }});
 var btnExport = ui.Button({label: '导出判读结果 CSV', onClick: exportRecords});

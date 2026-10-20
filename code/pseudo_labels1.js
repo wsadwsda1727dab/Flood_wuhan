@@ -22,10 +22,13 @@ var SAMPLE_SCALE = 100;         // 统计尺度（m）：计数、面积、去�
 // 【改动36】抽样点位尺度与统计尺度分离
 //   SAMPLE_SCALE(100 m) 保留给统计量（reduceRegion 的计数、面积、偏移中值、稳定区中值），
 //   它算出来的数就是 Summary 表的列值，不能动。
-//   样本点要回答的是"这个点是不是新增水体"—— 判定/取值尺度应当等于判读尺度（原生 10 m），
+//   样本点要回答的是"这个点是不是新增水体"—— 判定/取值尺度应当等于判读尺度（判读台 30 m，见【改动43】），
 //   用 100 m 格取值会把水/非水的混合像元平均掉，导致样本取值与目视判读看到的不同一块地。
 //   因此只把 4.13 的 stratifiedSample 换成下面这个常量；统计量、特征栈、四个阈值全部不变。
-var SAMPLE_POINT_SCALE = 10;    // 抽样点位尺度（m）：只作用于 4.13 的 stratifiedSample
+var SAMPLE_POINT_SCALE = 30;    // 抽样点位尺度（m）：只作用于 4.13 的 stratifiedSample
+// 【改动43】2026-10-20：10 m → 30 m，与判读台 REVIEW_SAMPLE_SCALE = 30 m 对齐
+//   （判读结果必须能回填主脚本；10 m 抽样点与 30 m 判读点取值口径不一致）。
+//   仍与 SAMPLE_SCALE(100 m) 的统计尺度分离，统计量/面积/特征栈不受影响。
 var POINTS_PER_CLASS = 2000;   // 每类最多抽样点数（实际取 min(该值, 该类像元数)）
 var SAMPLE_SEED = 42;          // 抽样随机种子
 
@@ -93,7 +96,7 @@ var S1_FILL_DB = -50;
 // ---- Sentinel-1 IW GRD 新增初值约束（排除事件前已有水体）----
 // 说明：以下均为参考初值，需按研究区轨道/入射角/地物类型用人工样本重新标定。
 var VV_PRE_NONWATER_TH = -15;  // 事件前 VV > -15 dB 才视为非水
-var VH_PRE_NONWATER_TH = -20;  // 事件前 VH > -20 dB 才视为非水
+var VH_PRE_NONWATER_TH = -23;  // 事件前 VH > -23 dB 才视为非水【改动42】
 var VV_POST_WATER_TH = -16;    // 事件后 VV < -16 dB 才视为水体
 var VH_POST_WATER_TH = -22;    // 事件后 VH < -22 dB 才视为水体
 

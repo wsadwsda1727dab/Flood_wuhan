@@ -22,14 +22,14 @@
 | --- | --- | --- |
 | 项目类型 | 遥感科研脚本仓库（数据生产 + 精度验证），非软件工程项目 | `AGENTS.md`、`code/temp_version_notes.md` |
 | 主语言 1 | JavaScript（**Google Earth Engine Code Editor 脚本**，依赖 `ee.*` / `Map.*` / `ui.*` / `Export.*`，本地 `node xxx.js` 跑不起来） | `AGENTS.md:13`、`code_accuraccy/validation_review_说明.md:17` |
-| 主语言 2 | Python（本地精度报告，**仅用标准库**，明确不引入 pandas / numpy） | `code_accuraccy/validation_accuracy_report.py:1-28`、`AGENTS.md:31` |
-| 运行平台 | Google Earth Engine Code Editor（浏览器）；Python 本地命令行 | `code_accuraccy/validation_review_说明.md:223-234` |
+| 主语言 2 | ~~Python（本地精度报告）~~ **已随脚本删除移除**：`code_accuraccy/validation_accuracy_report.py` 于 2026-10-20 删除，仓库现只剩 GEE JS 脚本 | 工作区 `git status` 显示 `D code_accuraccy/validation_accuracy_report.py`（最后一次提交 `01ea3b7`） |
+| 运行平台 | Google Earth Engine Code Editor（浏览器） | `code_accuraccy/validation_review_说明.md:223-234` |
 | 遥感数据源 | `COPERNICUS/S1_GRD`（IW，VV+VH）、`COPERNICUS/S2_SR_HARMONIZED`（L2A 优先）、`COPERNICUS/S2_HARMONIZED`（L1C 回退）、`USGS/SRTMGL1_003`、`JRC/GSW1_4/GlobalSurfaceWater` | `code/pseudo_labels1.js:611-663, 972-980` |
 | 研究区资产 | `projects/studied-glow-475306-v5/assets/wuhan`（代码内硬编码） | `code/pseudo_labels1.js:3` |
 | 包管理器 | **未发现**（无 `package.json` / `requirements.txt` / `pyproject.toml` / `Cargo.toml` / `go.mod`） | 全目录检索，见第 9 节 |
 | 版本控制 | Git（含 `.gitattributes`、`.gitignore`；`doc/`、`weeklyReport/`、`csvdata/`、`AGENTS.md` 被忽略） | `.gitignore`、`.gitattributes` |
 | 行尾/编码约定 | UTF-8 无 BOM；提交规范 LF，但工作区 JS 实际为 CRLF，要求不改动现有行尾 | `AGENTS.md:52-53`、`.gitattributes:1-3` |
-| 输出数据格式 | CSV（GEE 导出到 Google Drive；本地脚本可另出 Markdown / CSV 报告） | `code/pseudo_labels1.js:1504-1535`、`code_accuraccy/validation_accuracy_report.py:599-656` |
+| 输出数据格式 | CSV（GEE 导出到 Google Drive；判读结果 CSV 由本地现算成 Markdown 分析文档） | `code/pseudo_labels1.js:1504-1535`、`csvdata/validation_points/判读结果分析与阈值评价_20261019.md` |
 
 **未发现**：无 Dockerfile、无 CI 配置（无 `.github/workflows` 等）、无构建脚本、无测试框架。
 
@@ -55,8 +55,7 @@ c2/                                  ← 项目根目录（已确认）
 │   ├── validation_points.js         ← 生成候选验证点（第一阶段，1527 行）
 │   ├── validation_review.js         ← 目视判读台 + Reference 录入 + 导出（第二阶段，2153 行）
 │   ├── validation_review_说明.md    ← 判读台说明文档（含参数总表、导出列、已知限制）
-│   ├── 阈值合理性与精度评价流程.md  ← 阈值标定到独立验证的 6 步闭环链路
-│   └── validation_accuracy_report.py ← 本地精度报告（纯标准库，660 行）
+│   └── 阈值合理性与精度评价流程.md  ← 阈值标定到独立验证的 6 步闭环链路
 │
 ├── csvdata/                         ← GEE 导出的 CSV（被 git 忽略，删了不可恢复）
 │   ├── pseudo_labels/               ← 汇总表 Summary ~ Summary11 + 4 份分析文档
@@ -117,14 +116,13 @@ c2/                                  ← 项目根目录（已确认）
 | --- | --- | --- |
 | `validation_points.js` | 第一阶段：生成并导出候选验证点 | 复用伪标签生成流程，`POINTS_PER_CLASS=300`、`SAMPLE_SEED=20260927`、`SAMPLE_SCALE=100`（与训练样本用不同种子） |
 | `validation_review.js` | 第二阶段：目视判读工作台 | 自带一份标签生成代码；关闭全部伪标签导出；移除伪标签图层；提供判读面板与 Reference/confidence 录入；导出的 CSV 交本地脚本算指标 |
-| `validation_accuracy_report.py` | 本地精度计算 | 读判读 CSV → 输出 6 节报告：数据概况 / 主精度表（含 Wilson 95% CI）/ 分档精度 / 面积加权 OA / 判读置信度分层 / 误差剖析 + 自动提示 |
 
 **判读台的三个关键设计**（`code_accuraccy/validation_review_说明.md`）：
 1. **盲判**：默认 `REVIEW_HIDE_PSEUDO = true`，不显示伪标签、分层与置信度，避免开卷偏差。
 2. **五层分层抽样**（【改动34】）：`非洪涝 / High Flood / Medium Flood / 版本差异·事件前已是水 / 版本差异·前非水但后不够暗`，每层上限 `20/20/20/40/40`（合计 ≤140 点/场）。第 3、4 层是判断阈值松紧的关键——**这类「被新约束删掉」的像元在训练样本里根本不存在，必须单独抽**。
 3. **按事件留出 tune / valid**：`VALIDATION_EVENT_NAMES` 5 场作独立验证集（`2016_0630`、`2017_0824`、`2021_0823`、`2023_0719`、`2025_0607`），其余为调参集；`2020_0705` 故意留在调参集（第一轮已判读的 401 点会用于调参，同一场不能再当独立验证）。
 
-**`validation_accuracy_report.py` 的报告章节**：0 数据概况 → 1 主精度表（逐事件 + 合计，OA/Precision/Recall/Specificity/F1/Kappa + Wilson 95% CI）→ 2 分档精度表（High / Medium）→ 3 面积加权 OA → 4 人工判读置信度分层 → 5 误差剖析（四象限特征均值 + FP/FN 明细）→ 6 自动提示。
+**精度核算现状（2026-10-20 起）**：原本地脚本 `validation_accuracy_report.py` 已删除，精度由读判读 CSV 现算得出，口径与结果写在 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md`——主精度表（逐事件 + 合计，OA/Precision/Recall/F1/IoU/Kappa）+ 分层精度 + 差异层各变量 AUC 与分箱纯度 + 留一事件交叉验证。两套口径并存：全 351 点（差异层计 FN，唯一能同时评价精确率与召回率）与仅前三层 135 点（Recall 恒为 1.0，是结构性产物）。
 
 ### 4.3 分析文档模块（非代码，但对理解口径必需）
 
@@ -150,7 +148,6 @@ c2/                                  ← 项目根目录（已确认）
 | **主入口（生产）** | `code/pseudo_labels1.js` | 唯一当前主版本；在 GEE Code Editor 中 Run 即开始逐事件处理 |
 | **验证入口 1** | `code_accuraccy/validation_points.js` | 生成候选验证点并导出 CSV |
 | **验证入口 2** | `code_accuraccy/validation_review.js` | 浏览器内逐点盲判 + 录入 reference/confidence + 导出判读 CSV |
-| **报告入口** | `code_accuraccy/validation_accuracy_report.py` | `python code_accuraccy/validation_accuracy_report.py` |
 | 事件定义 | `code/pseudo_labels1.js` 中的 `EVENTS` 数组（第 186–433 行） | 20 条 = 18 场暴雨 + 2 场「零暴雨」对照（`isControl`，默认不跑） |
 | 汇总表列定义 | `SUMMARY_SELECTORS`（`code/pseudo_labels1.js:144-165`） | 41 列 |
 | 样本表列定义 | `SAMPLE_SELECTORS`（`code/pseudo_labels1.js:131-136`） | 18 列 |
@@ -170,7 +167,6 @@ c2/                                  ← 项目根目录（已确认）
 | --- | --- | --- |
 | Google Earth Engine 账号 | 需有权访问研究区资产 `projects/studied-glow-475306-v5/assets/wuhan` | `code/pseudo_labels1.js:3` |
 | 浏览器 | 使用 GEE Code Editor（脚本依赖 `ui.*` / `Map.*`，本地无法运行） | `code_accuraccy/validation_review_说明.md:17` |
-| Python | 运行本地精度报告；**只依赖标准库**（`argparse` / `csv` / `math` / `sys` / `unicodedata` / `collections` / `pathlib` / `statistics`） | `code_accuraccy/validation_accuracy_report.py:30-44` |
 | 依赖安装 | **项目内没有任何依赖清单文件，也未发现需要 `pip install` 的说明** | 见第 9 节 |
 
 ### 6.2 运行伪标签生成（GEE）
@@ -191,25 +187,9 @@ c2/                                  ← 项目根目录（已确认）
 
 > **重要限制**：Code Editor 每次 Run 都会重置脚本状态，判读结果只存在内存里 —— 必须在一次会话内判完并导出；判不完按事件分批（用 `RUN_EVENT_NAMES` 点名几场）。来源：`code_accuraccy/validation_review_说明.md:223-234`、`code_accuraccy/validation_review.js:1392-1394`。
 
-### 6.4 运行本地精度报告（Python）
+### 6.4 本地精度核算（无脚本）
 
-```bash
-# 用脚本内置默认路径
-python code_accuraccy/validation_accuracy_report.py
-
-# 多文件（多事件）/ 目录下所有 CSV
-python code_accuraccy/validation_accuracy_report.py a.csv b.csv
-python code_accuraccy/validation_accuracy_report.py <目录>
-
-# 落盘 Markdown 报告与指标 CSV，并调整 FP/FN 明细条数
-python code_accuraccy/validation_accuracy_report.py --md report.md --out-csv metrics.csv --detail 40
-
-# 剔除 confidence=0（无法判断）的点
-python code_accuraccy/validation_accuracy_report.py --drop-conf0
-```
-
-> 来源：`code_accuraccy/validation_accuracy_report.py:20-27, 599-656`、`AGENTS.md:31`。
-> **注意**：脚本内默认输入是**硬编码绝对路径** `D:\User\Documents\ChatGPT\c2\csvdata\validation_points\Wuhan_validation_reference_20200705.csv`，换机器需用参数传入（`code_accuraccy/validation_accuracy_report.py:49-51`）。
+原本地精度报告脚本 `code_accuraccy/validation_accuracy_report.py` 已于 2026-10-20 删除，现无本地精度脚本可跑。精度由读判读结果 CSV 现算，口径、公式与结果记录在 `csvdata/validation_points/判读结果分析与阈值评价_20261019.md`；重算时按该文档第 2～3 节的口径复现。
 
 ---
 
@@ -320,8 +300,6 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | 运行环境 | 依赖 | 说明 |
 | --- | --- | --- |
 | Google Earth Engine Code Editor | `ee`、`Map`、`ui`、`Export`、`print` 全局对象 | 由 GEE 平台提供，无需本地安装 |
-| Python | **仅标准库**：`argparse`、`csv`、`math`、`sys`、`unicodedata`、`collections`、`pathlib`、`statistics` | `code_accuraccy/validation_accuracy_report.py:30-44`；`AGENTS.md:31` 明确「只依赖标准库，不要引入 pandas / numpy」 |
-| Python 版本 | 代码使用 `from __future__ import annotations`、`list[Point]` 内建泛型标注 → **要求 Python ≥ 3.9**（标注为推断，**未确认**项目实际使用的版本） | `code_accuraccy/validation_accuracy_report.py:30, 172` |
 | 本地可选工具 | `node --check` 仅用于 JS 语法静态检查 | `code/temp_version_notes.md` 第 5 节【改动N】小节的「静态校验」段 |
 | Obsidian | `weeklyReport/` 为 Obsidian 库，含 `docx-exporter` 社区插件（`manifest.json` / `main.js`） | `weeklyReport/.obsidian/community-plugins.json`、`weeklyReport/.obsidian/plugins/docx-exporter/` |
 
@@ -377,7 +355,7 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 | 级别 | 事项 | 来源 |
 | --- | --- | --- |
 | 必须 | `validation_review.js` 当前版本**未在 GEE 实跑**，只做了 `node --check` 静态检查；因涉及阈值口径，必须在 Code Editor Run 并核对 Console 分层像元数 | `code_accuraccy/validation_review_说明.md:282` |
-| 必须 | `validation_accuracy_report.py` 对 `new_label = -1`（掩膜未定）的点会**静默排除**，尚未显式单列统计；这些点既不能算对也不能算错，使用前需补齐 | `code_accuraccy/validation_review_说明.md:407, 430` |
+| 必须 | `new_label = -1`（掩膜未定）与 `reference = -1`（未判读）须分别单列报数；原脚本曾静默丢点，脚本已于 2026-10-20 删除，现算时仍须遵守 | `code_accuraccy/validation_review_说明.md:407, 430` |
 | 必须 | `flood_sens_ratio` / `n_flood_at_m35` / `n_flood_at_m45` **仍按旧候选规则计算**（不含改动34 的 4 个约束），更新前不能作为新阈值的稳定性依据 | `code_accuraccy/validation_review_说明.md:209, 431`、`csvdata/pseudo_labels/事件筛查与训练集划分2.md:54` |
 | 必须 | 【改动34】的 4 个 dB 阈值只是 IW GRD **参考初值，尚未按本区标定**；标定后需同步回 `code/pseudo_labels1.js` 并重跑得到 `Summary12` | `code_accuraccy/validation_review_说明.md:270`、`code/pseudo_labels1.js:95-98` |
 | 高 | 目视核查首轮**未通过**：`2022_0627` / `2023_0618` 的 DIAG 截图显示洪涝像元呈孤立散点、无连片淹没面，且 MNDWI 合成里云多 | `code/temp_version_notes.md` 第 7 节结论 22、第 5 节【改动32】 |
@@ -399,8 +377,8 @@ python code_accuraccy/validation_accuracy_report.py --drop-conf0
 
 | # | 现象 | 本次观察到的证据 |
 | --- | --- | --- |
-| 1 | 代码引用了**不存在的输入文件** | `code_accuraccy/validation_accuracy_report.py:51` 定义 `SUMMARY_CSV = BASE_DIR / "Wuhan_2016_2025_validation_points_Summary.csv"`，但 `csvdata/validation_points/` 下**没有这个文件**。脚本对此有兜底（`AREA_FALLBACK` 内置表 + `try/except` 打印 warn），因此面积加权 OA 会退回到仅 3 个事件的内置权重。 |
-| 2 | 文档引用了**不存在的脚本** | `csvdata/validation_points/伪标签精度验证_数据核查.md:18, 172` 提到 `code_accuraccy/validation_accuracy.js`（GEE 端精度计算），但该文件**不在当前目录中**。 |
+| 1 | ~~代码引用了不存在的输入文件~~ **已消解** | 涉及的面积权重来源问题随 `code_accuraccy/validation_accuracy_report.py` 于 2026-10-20 删除一并消失；该脚本原先的 `SUMMARY_CSV` 指向不存在的文件、静默走内置兜底表。 |
+| 2 | 文档引用了**不存在的脚本** | `csvdata/validation_points/伪标签精度验证_数据核查.md:18, 172` 提到 `code_accuraccy/validation_accuracy.js`（GEE 端精度计算），该文件早已不存在；其替代者 `validation_accuracy_report.py` 也于 2026-10-20 删除。当前无本地精度脚本。 |
 | 3 | 两个验证脚本的抽样参数不完全一致 | `validation_points.js` 为 `POINTS_PER_CLASS = 300`；`validation_review.js` 的 `POINTS_PER_CLASS`（原 `200`）已随【改动37】移除（`code_accuraccy/validation_review.js:66`），现只按 `REVIEW_POINTS_PER_STRATUM` 分层配额抽样，`REVIEW_POINTS_PER_STRATUM` 合计可达 140 点/场。文档已记录历史成因，但三个数字并存易误读。 |
 | 4 | `validation_review_说明.md` 与实际文件内容存在版本差 | 说明文档第 5 节称「判读脚本的旧显示块已移除」，实际 `validation_review.js:1363-1367` 保留了一段被注释说明的 6/7 节（导出开关全为 `false`），属说明性保留，非缺陷。 |
 | 5 | 事件条数在文档中并存 18 / 19 / 20 三个数字 | 18 = 当前暴雨事件数；19 = 【改动28】合并前；20 = `EVENTS` 数组总条数（18 暴雨 + 2 对照）。读文档时需注意语境。 |
