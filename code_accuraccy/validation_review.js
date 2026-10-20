@@ -29,7 +29,7 @@
 //      统计尺度 SAMPLE_SCALE(100 m)、特征栈与四个阈值均未动。
 //   8)【改动44】新增第 5 层 `missed_optical`（漏检候选：SAR 六条全过、非永久水、坡度合格，
 //      但窗口内有 S2 且光学判为非水）。此前这类像元既不在 knownArea 也不在 droppedByNewThr，
-//      六层里抽不到一个点，是「Recall 恒为 1.000」的构造性原因。同时订正了原先设想的
+//      改动前的五层里抽不到一个点，是「Recall 恒为 1.000」的构造性原因。同时订正了原先设想的
 //      漏检层定义 `oldSarFlood01 ∧ ¬s1Valid`——它与 `oldSarFlood01` 自带的 `.and(s1Valid)`
 //      互斥，是空集。
 // 文件末尾追加第二部分：判读面板 + Reference 录入 + 判读结果导出。
@@ -1091,9 +1091,11 @@ function buildEvent(ev) {
   //     5 =【改动44】漏检候选层：SAR 六条件（两条相对阈值 + 四条绝对阈值）全部成立、非永久水、
   //         坡度合格，但窗口内有 S2 且光学判为非水（MNDWI ≤ MNDWI_THRESHOLD）。这类像元最终
   //         **被掩掉（label = −1 掩膜未定）而不是记 0**，见下面的推导。它是"SAR 说水、光学
-  //         说干"，是当前标签唯一还有系统性漏检风险的来源；单独拆出来才能估出真正的 Recall。
+  //         说干"，是当前标签唯一还有系统性漏检风险的来源；单独拆出来才有可估的漏检样本。
+  //         注意：该层是固定配额的非随机分层抽样，且像元 label = −1、不在 knownArea 的
+  //         混淆矩阵内，因此**不能直接并入 Recall** 的分子分母，须先定加权口径。
   //         【改动44】之前第 5 层不存在：这类像元既不在 knownArea（label 无值），也不在
-  //         droppedByNewThr，五个层里**一个都抽不到**——这正是 "Recall 恒为 1.000" 的构造性原因。
+  //         droppedByNewThr，改动前的五层里**一个都抽不到**——这正是 "Recall 恒为 1.000" 的构造性原因。
   //   差异层按**最终标签**定义（旧规则 label = 1 且新规则 label ≠ 1），也就是 Summary10 比
   //   Summary11 多出来（随后被删掉）的那些像元；候选层面被删、但本来就不进标签的像元
   //   （永久水体、坡度不合格、光学/时相不满足）不在其中，也不需要判读。
@@ -1455,7 +1457,8 @@ var EXPORT_BLANK_SHEET = false;      // true = 另导一份"线下判读底表"�
 //   值 = buildEvent 里 stratum 带的像元值；六层含义见 4.10b。
 //   3、4 两层是"约束前判洪、约束后被删"的差异层，是判断阈值松紧的关键，点数给得多一些。
 //   【改动44】新增第 5 层（漏检候选：SAR 六条全过、非永久水、坡度合格，但窗口内有 S2 且
-//     光学判为非水）——它补上了"SAR 说水、光学说干"这个此前抽不到的格子，Recall 才有意义。
+//     光学判为非水）——它补上了"SAR 说水、光学说干"这个此前抽不到的格子，才有可估的漏检样本
+//     （固定配额的非随机分层抽样，且像元 label = −1，**加权口径未定前不能直接并入 Recall**）。
 //   0/1/2 三层用于算 Precision / Recall 的总体水平，对四阈值不敏感，不必多抽。
 //   总点数 ≈ 事件数 × Σ(下面六个数)，全量 18 场就是 18 × 200 = 最多 3600 点；
 //   单次会话判不完就按事件分批跑（用 RUN_EVENT_NAMES 点名几场）。
@@ -1563,12 +1566,12 @@ function buildReviewPoints(r) {
     geometries: true,
     seed: SAMPLE_SEED,
     // 【改动40】必须显式关掉 dropNulls：reviewImage 里带着 label 带（sampleImage
-    //   :1146-1149），而 label 的掩膜是 knownArea（:1042/:1044-1047）；层 3/4 的像元
-    //   按构造是 droppedByNewThr = oldFloodUsed ∧ ¬floodUsed（:1088），全在 knownArea
+    //   :1194-1197），而 label 的掩膜是 knownArea（:1063 / :1027-1047）；层 3/4 的像元
+    //   按构造是 droppedByNewThr = oldFloodUsed ∧ ¬floodUsed（:1118），全在 knownArea
     //   之外 → label 带上无值。默认 dropNulls:true 会把这些候选点当"含 null"整层剔掉，
     //   请求 140 点只返回 60 点（实测 2020_0705 = 20/20/20/0/0）。层 0/1/2 在 knownArea
     //   内、label 有值，所以只有 3/4 两层消失。排除 Unknown 已由 stratum 自身的掩膜
-    //   samplable（:1096）完成，此处不需要 label 再筛一次。
+    //   samplable（:1142）完成，此处不需要 label 再筛一次。第 5 层同理（label 也是 −1）。
     dropNulls: false,
     tileScale: 4
   });

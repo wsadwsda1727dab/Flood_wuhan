@@ -953,6 +953,8 @@ var missedByOptical = sarFlood01.and(s2Valid).and(opticalFlood.not())
 
 即「SAR 六条全过（含 `s1Valid`）∧ 窗口内有 S2 ∧ 光学判非水（`MNDWI ≤ MNDWI_THRESHOLD`）∧ 非永久水 ∧ 坡度合格」。这类像元 `floodUsed` 与 `nonFloodUsed` 都不成立 → `knownArea = false` → 最终 `label = −1`（掩膜未定）。第 0–4 层全部落在 `knownArea` 或 `droppedByNewThr` 里，覆盖不到它——这正是「前三层 135 点在四阈值放宽到极限时预测零变化」与「`Recall` 恒为 1.000」的构造性原因。
 
+> **口径限定**：本层是固定配额的非随机分层抽样，且像元 `label = −1`、不在 `knownArea` 的混淆矩阵内。它给的是「漏检候选里真洪占多大比例」，**加权口径未定前不能直接并入 `Recall`** 的分子分母（该口径列在 `code_accuraccy/阈值合理性与精度评价流程.md` 的未决事项第 2 条）。
+
 **改动**：
 
 | 位置（`code_accuraccy/validation_review.js`） | 内容 |
@@ -1132,4 +1134,4 @@ var missedByOptical = sarFlood01.and(s2Valid).and(opticalFlood.not())
 > 2026-10-14 增补：**【改动41】`validation_review.js` 判读点抽样尺度 `REVIEW_SAMPLE_SCALE` 由 10 m 改为 30 m**——10 m 下点位过多、单场判读台跑不出来。改的是常量本身（`:78`），两处使用点（4.10b 分层像元直方图 `:1121`、7.1 判读点抽样 `:1504`）随变量联动；统计尺度 `SAMPLE_SCALE`(100 m)、特征栈与四个阈值均未动。**代价**：30 m 下导出的 `VV_pre`/`VH_pre`/`VV_post_c`/`VH_post_c`/`MNDWI` 都是 30 m 聚合值，而它们是四个阈值的直接输入，用聚合值标定像元级阈值不能直接回填主脚本。见第 5 节末。
 > 2026-10-20 增补：**【改动43】`SAMPLE_POINT_SCALE` 由 10 m 改为 30 m**——与判读台 `REVIEW_SAMPLE_SCALE`（【改动41】后的 30 m）对齐，否则判读点导出的四个 S1 列是 30 m 聚合值、主脚本样本点是 10 m 像元值，判读结果无法回填主脚本、阈值标定结论（【改动42】）无法与主脚本口径对齐。统计尺度 `SAMPLE_SCALE`(100 m)、特征栈、四个阈值、导出列均未动。**未在 GEE 实跑**。见第 4 节与第 5 节末。
 > 2026-10-20 增补：**【改动42】`VH_PRE_NONWATER_TH` 由 −20 dB 标定为 −23 dB**——按 351 个判读有效点标定四个【改动34】阈值，只有此条有稳健依据（AUC 0.504 最低、单参数扫描 F1 .677→.758、留一事件三折全正、翻转的 33 点全部落在 `cut_prewater` 层）。`code/pseudo_labels1.js:96` 与 `code_accuraccy/validation_review.js:54` 同步改值；其余三条保持原值（`VH_POST_WATER_TH` = −22 按「只做有稳健依据的一条」处理）。**已重跑 GEE，全量结果 `Summary12.csv` 已产出**（18 场面积相对 `Summary11` 全部上升，+28.49% ~ +114.59%，总面积 202.54 → 291.77 km²；`n_nonflood_px` 合计与 `Summary11` 完全相同）。见第 4 节与第 5 节末。
-> 2026-10-20 增补：**【改动44】判读台新增第 5 层「漏检候选」+ 判读事件换成 `2016_0630` + `2023_0719`**——补上「SAR 说水、光学说干」这一类此前一个点都抽不到、导致 `Recall` 恒为 1.000 的缺口；同时订正原设想定义 `oldSarFlood01 ∧ ¬s1Valid` 因 `oldSarFlood01` 已带 `.and(s1Valid)` 而恒为空集的勘误。配额 `REVIEW_POINTS_PER_STRATUM` 改 20/20/20/40/40/40（待 30 m 分层诊断定稿）。**未在 GEE 实跑**，仅 `node --check` 通过。见第 4 节与第 5 节末。
+> 2026-10-20 增补：**【改动44】判读台新增第 5 层「漏检候选」+ 判读事件换成 `2016_0630` + `2023_0719`**——补上「SAR 说水、光学说干」这一类此前一个点都抽不到、导致 `Recall` 恒为 1.000 的缺口（该层为固定配额的非随机分层抽样、像元 `label = −1`，加权口径未定前不能直接并入 `Recall`）；同时订正原设想定义 `oldSarFlood01 ∧ ¬s1Valid` 因 `oldSarFlood01` 已带 `.and(s1Valid)` 而恒为空集的勘误。配额 `REVIEW_POINTS_PER_STRATUM` 改 20/20/20/40/40/40（待 30 m 分层诊断定稿）。**未在 GEE 实跑**，仅 `node --check` 通过。见第 4 节与第 5 节末。

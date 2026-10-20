@@ -108,9 +108,11 @@ vv_diff < -4.0  ∧  vh_diff < -3.5          ← 原规则（相对下降）
 
 差异层按**最终标签**定义（旧规则 `label = 1` 且新规则 `label ≠ 1`），也就是 Summary10 比 Summary11 多出、随后被删掉的那些像元；候选层面被删但本来就不进标签的像元（永久水体、坡度不合格）不在其中，不需要判读。
 
-**第 5 层（【改动44】）为什么必须有**：第 0–4 层全都在 `knownArea` 或 `droppedByNewThr` 里，而「SAR 六条全过 + 有 S2 + 光学判非水」这类像元两者都不属于——`floodUsed` 要为真需光学背书（High）或无 S2（Medium），`nonFloodUsed` 要 `sarFlood01.not()`，此处的 `sarFlood01` 恒为真，于是 `knownArea = false`、`label = −1`。它在六层之外**一个点都抽不到**，这正是「前三层 135 点在四阈值放宽到极限时预测零变化」以及「`Recall` 恒为 1.000」的构造性原因。定义见 `validation_review.js` 的 `missedByOptical`。
+**第 5 层（【改动44】）为什么必须有**：第 0–4 层全都在 `knownArea` 或 `droppedByNewThr` 里，而「SAR 六条全过 + 有 S2 + 光学判非水」这类像元两者都不属于——`floodUsed` 要为真需光学背书（High）或无 S2（Medium），`nonFloodUsed` 要 `sarFlood01.not()`，此处的 `sarFlood01` 恒为真，于是 `knownArea = false`、`label = −1`。它在改动前的五层里**一个点都抽不到**，这正是「前三层 135 点在四阈值放宽到极限时预测零变化」以及「`Recall` 恒为 1.000」的构造性原因。定义见 `validation_review.js` 的 `missedByOptical`。
 
-> **口径限定**：第 5 层问的是「S2 判非水是否否掉了真淹没」，**不是**「SAR 变化本身不成立」。后者属旧规则漏检，与【改动34】四条绝对阈值无关。若该层判读真洪占比高，矛盾在光学项（`MNDWI_THRESHOLD` / S2 时相），不在四条 S1 阈值——不要用它去推 `VV_POST_WATER_TH` 的松紧。
+> **统计口径限定**：第 5 层是**固定配额的非随机分层抽样**，且该层像元 `label = −1`、不在 `knownArea` 的混淆矩阵内，所以它给的是「漏检候选里真洪占多大比例」，**不能直接并入 `Recall` 的分子分母**；须先定加权口径（见 `code_accuraccy/阈值合理性与精度评价流程.md` 第「非随机分层的加权口径」条）。
+
+> **语义限定**：第 5 层问的是「S2 判非水是否否掉了真淹没」，**不是**「SAR 变化本身不成立」。后者属旧规则漏检，与【改动34】四条绝对阈值无关。若该层判读真洪占比高，矛盾在光学项（`MNDWI_THRESHOLD` / S2 时相），不在四条 S1 阈值——不要用它去推 `VV_POST_WATER_TH` 的松紧。
 
 配套导出三条标签：
 
@@ -306,7 +308,7 @@ Wuhan_2025_0607  最新年度
 | `:1380-1381` | 7.1 导语注释：同步尺度表述（原写"10 m = 判读尺度"） |
 | `:1497-1504` | `stratifiedSample` 的 `scale` 注释：同步，并写明 30 m 聚合值不能直接用于标定像元级阈值 |
 
-**未改动**：`SAMPLE_SCALE = 100 m`（统计尺度）、特征栈、四个 S1 阈值（`VV_PRE_NONWATER_TH` / `VH_PRE_NONWATER_TH` / `VV_POST_WATER_TH` / `VH_POST_WATER_TH` 的值一个没动）、两个相对阈值、配额表 `REVIEW_POINTS_PER_STRATUM`（当时仍 20/20/20/40/40；【改动44】后为六层 20/20/20/40/40/40）、当时五层定义、`REVIEW_SELECTORS` 29 列、判读面板与导出逻辑。该常量的两个使用点（`:1121` 分层像元直方图、`:1504` 判读点抽样）都是引用变量，随常量联动，无硬编码 10。
+**未改动**：`SAMPLE_SCALE = 100 m`（统计尺度）、特征栈、四个 S1 阈值（`VV_PRE_NONWATER_TH` / `VH_PRE_NONWATER_TH` / `VV_POST_WATER_TH` / `VH_POST_WATER_TH` 的值一个没动）、两个相对阈值、配额表 `REVIEW_POINTS_PER_STRATUM`（当时仍 20/20/20/40/40；【改动44】后为六层 20/20/20/40/40/40）、当时的五层定义、`REVIEW_SELECTORS` 27 列（导出加 `reference` / `confidence` 为 29 列）、判读面板与导出逻辑。该常量的两个使用点（`:1121` 分层像元直方图、`:1504` 判读点抽样）都是引用变量，随常量联动，无硬编码 10。
 
 **连带影响**：
 
@@ -507,4 +509,4 @@ var missedByOptical = sarFlood01.and(s2Valid).and(opticalFlood.not())
 | 2026-10-14 | 【改动41】判读点抽样尺度由 10 m 改为 30 m：`REVIEW_SAMPLE_SCALE`（`validation_review.js:78`）由 `10` 改为 `30`，用于 7.1 判读点抽样与 4.10b 分层像元计数；统计尺度 `SAMPLE_SCALE`(100 m)、特征栈与四个 S1 阈值均未动。触发原因是 10 m 下点位过多、单场判读台跑不出来。代价：30 m 下 `VV_pre` / `VH_pre` / `VV_post_c` / `VH_post_c` 等列为聚合值，不能直接用于标定像元级阈值。本文档 3.3 节、3.10 节（新增）、2 节结构表、4.3 节与 8 节同步更新 |
 | 2026-10-20 | 【改动42】`VH_PRE_NONWATER_TH` 由 −20 dB 标定为 −23 dB（与 `code/pseudo_labels1.js` 逐条同步）。依据 351 个判读有效点：`VH_pre` 在差异层上 AUC 0.504（13 个候选变量里最低）、单参数扫描 F1 .677 → .758、留一事件三折全正、−20 → −23 翻转的 33 点全部落在 `cut_prewater` 层而前三层 145 点 0 变化。其余三条绝对阈值（−15 / −16 / −22）按证据不足保持原值。本文档 3.1 节（阈值表、`sarFlood` 规则式、标定说明）与 4.1 节同步更新；判读点链、五层定义、配额、导出列均未动 |
 | 2026-10-20 | 【改动43】主脚本 `code/pseudo_labels1.js` 的 `SAMPLE_POINT_SCALE` 由 10 m 改为 30 m，与本文件 `REVIEW_SAMPLE_SCALE = 30` 对齐，【改动41】的"30 m 标定不能回填主脚本"冲突消解。本文件代码无改动，仅 3.10 节与 8 节的相关条目由"未决"改为"已决"并记录剩余风险 |
-| 2026-10-20 | 【改动44】新增第 5 层 `missed_optical`（漏检候选：SAR 六条全过、有 S2、光学判非水、非永久水、坡度合格，最终 `label = −1`），把 `Recall` 恒为 1.000 的结构性缺口补上一类；`samplable` 加 `.or(missedByOptical)`，`stratum` 链加 `.where(missedByOptical, 5)`，`REVIEW_STRATA` 加第 5 项，配额 `REVIEW_POINTS_PER_STRATUM` 改 20/20/20/40/40/40（合计 200 点/场，待分层诊断定稿），分层图层配色 `max` 改 5 并追加黑色。同时 `RUN_EVENT_NAMES` 由第 2 轮三场（`2020_0705` / `2021_0823` / `2023_0618`）换成 `Wuhan_2016_0630` + `Wuhan_2023_0719`。勘误：原先设想的漏检层 `oldSarFlood01 ∧ ¬s1Valid` 因 `oldSarFlood01` 已带 `.and(s1Valid)` 而恒为空集，`code_accuraccy/阈值合理性与精度评价流程.md:147` 同此误。四阈值、`SAMPLE_SCALE`、`REVIEW_SAMPLE_SCALE`、`REVIEW_SELECTORS` 均未动。本文档 3.2 / 3.3 / 3.5 / 2 节结构表 / 4.3 / 4.4 / 4.5 / 8 节与 3.11 节（新增）同步更新。**未在 GEE 实跑**，仅 `node --check` 通过 |
+| 2026-10-20 | 【改动44】新增第 5 层 `missed_optical`（漏检候选：SAR 六条全过、有 S2、光学判非水、非永久水、坡度合格，最终 `label = −1`），把 `Recall` 恒为 1.000 的结构性缺口补上一类（第 5 层是固定配额的非随机分层抽样，`label = −1`，加权口径未定前不能直接并入 `Recall`）；`samplable` 加 `.or(missedByOptical)`，`stratum` 链加 `.where(missedByOptical, 5)`，`REVIEW_STRATA` 加第 5 项，配额 `REVIEW_POINTS_PER_STRATUM` 改 20/20/20/40/40/40（合计 200 点/场，待分层诊断定稿），分层图层配色 `max` 改 5 并追加黑色。同时 `RUN_EVENT_NAMES` 由第 2 轮三场（`2020_0705` / `2021_0823` / `2023_0618`）换成 `Wuhan_2016_0630` + `Wuhan_2023_0719`。勘误：原先设想的漏检层 `oldSarFlood01 ∧ ¬s1Valid` 因 `oldSarFlood01` 已带 `.and(s1Valid)` 而恒为空集，`code_accuraccy/阈值合理性与精度评价流程.md` 的「漏检点层」一条同此误（已同轮订正）。四阈值、`SAMPLE_SCALE`、`REVIEW_SAMPLE_SCALE`、`REVIEW_SELECTORS` 均未动。本文档 3.2 / 3.3 / 3.5 / 2 节结构表 / 4.3 / 4.4 / 4.5 / 8 节与 3.11 节（新增）同步更新。**未在 GEE 实跑**，仅 `node --check` 通过 |
